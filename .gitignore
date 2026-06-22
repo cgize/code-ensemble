@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.opencode/state/
+.env
+.env.local
+*.log
+.DS_Store
+Thumbs.db
+desktop.ini

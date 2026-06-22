@@ -1,0 +1,22 @@
+{
+  "models": {
+    "planner": "openai/gpt-5.4",
+    "reviewer": "opencode-go/glm-5.2"
+  },
+  "variants": {
+    "planner": "xhigh",
+    "reviewer": "max"
+  },
+  "prompts": {
+    "orchestrator": "./.code-swarm/orchestrator.md"
+  },
+  "subagents": {
+    "disable": [],
+    "rename": {
+      "tester": "verifier"
+    }
+  },
+  "transitions": {
+    "reviewToPlanOnlyWithFindings": true
+  }
+}

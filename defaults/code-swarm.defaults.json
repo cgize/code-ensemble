@@ -1,0 +1,56 @@
+{
+  "stateFile": ".opencode/state/code-swarm.json",
+  "roles": {
+    "orchestrator": {
+      "model": "opencode-go/deepseek-v4-flash",
+      "variant": "max",
+      "mode": "primary",
+      "promptFile": "prompts/orchestrator.md"
+    },
+    "explorer": {
+      "model": "opencode-go/deepseek-v4-flash",
+      "variant": "max",
+      "mode": "subagent",
+      "promptFile": "prompts/explorer.md"
+    },
+    "researcher": {
+      "model": "opencode-go/deepseek-v4-flash",
+      "variant": "max",
+      "mode": "subagent",
+      "promptFile": "prompts/researcher.md"
+    },
+    "planner": {
+      "model": "openai/gpt-5.4",
+      "variant": "xhigh",
+      "mode": "subagent",
+      "promptFile": "prompts/planner.md"
+    },
+    "implementer": {
+      "model": "opencode-go/kimi-k2.7-code",
+      "variant": "max",
+      "mode": "subagent",
+      "promptFile": "prompts/implementer.md"
+    },
+    "reviewer": {
+      "model": "opencode-go/glm-5.2",
+      "variant": "max",
+      "mode": "subagent",
+      "promptFile": "prompts/reviewer.md"
+    },
+    "tester": {
+      "model": "opencode-go/minimax-m3",
+      "variant": "max",
+      "mode": "subagent",
+      "promptFile": "prompts/tester.md"
+    }
+  },
+  "commands": {
+    "phase-status": "commands/phase-status.md",
+    "approve-phase": "commands/approve-phase.md",
+    "force-phase": "commands/force-phase.md",
+    "reset-phase": "commands/reset-phase.md"
+  },
+  "transitions": {
+    "reviewToPlanOnlyWithFindings": true
+  }
+}
