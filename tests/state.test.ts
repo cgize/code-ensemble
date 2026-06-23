@@ -5,10 +5,10 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
-  approveCodeSwarmTransition,
-  proposeCodeSwarmTransition,
-  readCodeSwarmState,
-  resetCodeSwarmState,
+  approveCodeEnsembleTransition,
+  proposeCodeEnsembleTransition,
+  readCodeEnsembleState,
+  resetCodeEnsembleState,
 } from "../src/state";
 
 const tempDirs: string[] = [];
@@ -21,12 +21,12 @@ afterEach(async () => {
   );
 });
 
-describe("code-swarm state", () => {
+describe("code-ensemble state", () => {
   it("creates the default state when the file does not exist", async () => {
-    const root = await mkdtemp(join(tmpdir(), "code-swarm-state-"));
+    const root = await mkdtemp(join(tmpdir(), "code-ensemble-state-"));
     tempDirs.push(root);
 
-    const state = await readCodeSwarmState(root, ".opencode/state/code-swarm.json");
+    const state = await readCodeEnsembleState(root, ".opencode/state/code-ensemble.json");
 
     expect(state.phase).toBe("plan");
     expect(state.confirmationPending).toBe(false);
@@ -34,11 +34,11 @@ describe("code-swarm state", () => {
   });
 
   it("proposes and approves a phase transition", async () => {
-    const root = await mkdtemp(join(tmpdir(), "code-swarm-state-"));
+    const root = await mkdtemp(join(tmpdir(), "code-ensemble-state-"));
     tempDirs.push(root);
 
-    await proposeCodeSwarmTransition(root, ".opencode/state/code-swarm.json", "implement");
-    const approved = await approveCodeSwarmTransition(root, ".opencode/state/code-swarm.json", {
+    await proposeCodeEnsembleTransition(root, ".opencode/state/code-ensemble.json", "implement");
+    const approved = await approveCodeEnsembleTransition(root, ".opencode/state/code-ensemble.json", {
       planSummary: "Plan approved by user",
       openIssues: ["Run implementation smoke test"],
     });
@@ -50,14 +50,14 @@ describe("code-swarm state", () => {
   });
 
   it("backs up invalid JSON before resetting to defaults", async () => {
-    const root = await mkdtemp(join(tmpdir(), "code-swarm-state-"));
+    const root = await mkdtemp(join(tmpdir(), "code-ensemble-state-"));
     tempDirs.push(root);
 
     await mkdir(join(root, ".opencode", "state"), { recursive: true });
-    await writeFile(join(root, ".opencode", "state", "code-swarm.json"), "not-json");
+    await writeFile(join(root, ".opencode", "state", "code-ensemble.json"), "not-json");
 
-    const state = await resetCodeSwarmState(root, ".opencode/state/code-swarm.json");
-    const backup = await readFile(join(root, ".opencode", "state", "code-swarm.json.bak"), "utf8");
+    const state = await resetCodeEnsembleState(root, ".opencode/state/code-ensemble.json");
+    const backup = await readFile(join(root, ".opencode", "state", "code-ensemble.json.bak"), "utf8");
 
     expect(state.phase).toBe("plan");
     expect(backup).toBe("not-json");

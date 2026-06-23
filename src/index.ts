@@ -1,25 +1,25 @@
-import { codeSwarmPlugin } from "./register.js";
+import { codeEnsemblePlugin } from "./register.js";
 
-export default codeSwarmPlugin;
+export default codeEnsemblePlugin;
 export { buildCommandDefinitions } from "./commands.js";
 export { getPackageRoot, loadDefaultConfig } from "./defaults.js";
-export { resolveCodeSwarmConfig } from "./overrides.js";
+export { resolveCodeEnsembleConfig } from "./overrides.js";
 export { formatCompactionContext, formatStateSummary } from "./register.js";
 export {
-  approveCodeSwarmTransition,
+  approveCodeEnsembleTransition,
   createDefaultState,
-  forceCodeSwarmPhase,
-  proposeCodeSwarmTransition,
-  readCodeSwarmState,
-  resetCodeSwarmState,
+  forceCodeEnsemblePhase,
+  proposeCodeEnsembleTransition,
+  readCodeEnsembleState,
+  resetCodeEnsembleState,
 } from "./state.js";
 export type {
-  CodeSwarmDefaults,
-  CodeSwarmPluginOptions,
-  CodeSwarmProjectOverrides,
-  CodeSwarmState,
+  CodeEnsembleDefaults,
+  CodeEnsemblePluginOptions,
+  CodeEnsembleProjectOverrides,
+  CodeEnsembleState,
   Phase,
-  ResolvedCodeSwarmConfig,
+  ResolvedCodeEnsembleConfig,
   ResolvedRoleConfig,
   RoleDefaults,
   RoleName,

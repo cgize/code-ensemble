@@ -1,17 +1,20 @@
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { relative, resolve } from "node:path";
 import { tool, type Plugin } from "@opencode-ai/plugin";
+import type { Model as ModelV2 } from "@opencode-ai/sdk/v2";
 
 import { buildCommandDefinitions } from "./commands.js";
-import { resolveCodeSwarmConfig } from "./overrides.js";
+import { resolveCodeEnsembleConfig } from "./overrides.js";
 import {
-  approveCodeSwarmTransition,
-  forceCodeSwarmPhase,
-  proposeCodeSwarmTransition,
-  readCodeSwarmState,
-  resetCodeSwarmState,
+  approveCodeEnsembleTransition,
+  forceCodeEnsemblePhase,
+  proposeCodeEnsembleTransition,
+  readCodeEnsembleState,
+  resetCodeEnsembleState,
 } from "./state.js";
-import type { CodeSwarmPluginOptions, CodeSwarmState, Phase, ResolvedCodeSwarmConfig, RoleName } from "./types.js";
+import type { CodeEnsemblePluginOptions, CodeEnsembleState, ResolvedCodeEnsembleConfig, RoleName } from "./types.js";
 
-export function formatStateSummary(state: CodeSwarmState): string {
+export function formatStateSummary(state: CodeEnsembleState): string {
   const issues =
     state.openIssues.length > 0
       ? state.openIssues.map((issue) => `- ${issue}`).join("\n")
@@ -31,7 +34,7 @@ export function formatStateSummary(state: CodeSwarmState): string {
   ].join("\n");
 }
 
-export function formatCompactionContext(state: CodeSwarmState): string {
+export function formatCompactionContext(state: CodeEnsembleState): string {
   const recentHistory =
     state.history
       .slice(-3)
@@ -39,27 +42,27 @@ export function formatCompactionContext(state: CodeSwarmState): string {
       .join("\n") || "- none";
 
   return [
-    "## Code Swarm Runtime State",
+    "## Code Ensemble Runtime State",
     formatStateSummary(state),
     "Recent transitions:",
     recentHistory,
   ].join("\n");
 }
 
-type SwarmSubagent = Exclude<RoleName, "orchestrator">;
+type EnsembleSubagent = Exclude<RoleName, "director">;
 
-function buildAgentDefinitions(config: ResolvedCodeSwarmConfig) {
-  const getAgentName = (role: SwarmSubagent) => config.renamedSubagents[role] ?? role;
+function buildAgentDefinitions(config: ResolvedCodeEnsembleConfig) {
+  const getAgentName = (role: EnsembleSubagent) => config.renamedSubagents[role] ?? role;
 
-  const isDisabled = (role: SwarmSubagent) => config.disabledSubagents.includes(role);
+  const isDisabled = (role: EnsembleSubagent) => config.disabledSubagents.includes(role);
 
   const agentDefinitions: Record<string, unknown> = {
-    orchestrator: {
-      description: "Coordinates the code-swarm workflow across plan, implement, and review.",
-      mode: config.roles.orchestrator.mode,
-      model: config.roles.orchestrator.model,
-      variant: config.roles.orchestrator.variant,
-      prompt: config.roles.orchestrator.promptText,
+    director: {
+      description: "Coordinates the code-ensemble workflow across plan, implement, and review.",
+      mode: config.roles.director.mode,
+      model: config.roles.director.model,
+      variant: config.roles.director.variant,
+      prompt: config.roles.director.promptText,
       permission: {
         edit: "deny",
         bash: "deny",
@@ -67,10 +70,12 @@ function buildAgentDefinitions(config: ResolvedCodeSwarmConfig) {
           "*": "deny",
           [getAgentName("explorer")]: isDisabled("explorer") ? "deny" : "allow",
           [getAgentName("planner")]: isDisabled("planner") ? "deny" : "allow",
+          [getAgentName("architect")]: isDisabled("architect") ? "deny" : "allow",
           [getAgentName("implementer")]: isDisabled("implementer") ? "deny" : "allow",
           [getAgentName("reviewer")]: isDisabled("reviewer") ? "deny" : "allow",
           [getAgentName("tester")]: isDisabled("tester") ? "deny" : "allow",
           [getAgentName("researcher")]: isDisabled("researcher") ? "deny" : "allow",
+          [getAgentName("visualizer")]: isDisabled("visualizer") ? "deny" : "allow",
         },
       },
     },
@@ -98,6 +103,17 @@ function buildAgentDefinitions(config: ResolvedCodeSwarmConfig) {
     };
   }
 
+  if (!isDisabled("visualizer")) {
+    agentDefinitions[getAgentName("visualizer")] = {
+      description: "Vision specialist for screenshots, diagrams, and image attachments.",
+      mode: config.roles.visualizer.mode,
+      model: config.roles.visualizer.model,
+      variant: config.roles.visualizer.variant,
+      prompt: config.roles.visualizer.promptText,
+      permission: { edit: "deny", bash: "deny" },
+    };
+  }
+
   if (!isDisabled("planner")) {
     agentDefinitions[getAgentName("planner")] = {
       description: "Planning specialist for the plan phase.",
@@ -106,6 +122,19 @@ function buildAgentDefinitions(config: ResolvedCodeSwarmConfig) {
       variant: config.roles.planner.variant,
       prompt: config.roles.planner.promptText,
       permission: { edit: "deny", bash: "deny" },
+      fallbacks: config.fallbacks.planner,
+    };
+  }
+
+  if (!isDisabled("architect")) {
+    agentDefinitions[getAgentName("architect")] = {
+      description: "Critical decision specialist for architecture and high-risk changes.",
+      mode: config.roles.architect.mode,
+      model: config.roles.architect.model,
+      variant: config.roles.architect.variant,
+      prompt: config.roles.architect.promptText,
+      permission: { edit: "deny", bash: "deny" },
+      fallbacks: config.fallbacks.architect,
     };
   }
 
@@ -145,8 +174,8 @@ function buildAgentDefinitions(config: ResolvedCodeSwarmConfig) {
   return agentDefinitions;
 }
 
-export const codeSwarmPlugin: Plugin = async ({ worktree }, options = {}) => {
-  const config = resolveCodeSwarmConfig(worktree, options as CodeSwarmPluginOptions);
+export const codeEnsemblePlugin: Plugin = async ({ worktree }, options = {}) => {
+  const config = resolveCodeEnsembleConfig(worktree, options as CodeEnsemblePluginOptions);
 
   return {
     config: async (cfg) => {
@@ -156,23 +185,23 @@ export const codeSwarmPlugin: Plugin = async ({ worktree }, options = {}) => {
       Object.assign(cfg.command, buildCommandDefinitions(config));
     },
     tool: {
-      code_swarm_state: tool({
-        description: "Read or reset the code-swarm state for the current project.",
+      code_ensemble_state: tool({
+        description: "Read or reset the code-ensemble state for the current project.",
         args: {
           action: tool.schema.enum(["get", "reset"]),
         },
         async execute(args) {
           if (args.action === "reset") {
-            const state = await resetCodeSwarmState(worktree, config.stateFile);
+            const state = await resetCodeEnsembleState(worktree, config.stateFile);
             return JSON.stringify(state);
           }
 
-          const state = await readCodeSwarmState(worktree, config.stateFile);
+          const state = await readCodeEnsembleState(worktree, config.stateFile);
           return JSON.stringify(state);
         },
       }),
-      code_swarm_transition: tool({
-        description: "Propose, approve, or force a code-swarm phase transition.",
+      code_ensemble_transition: tool({
+        description: "Propose, approve, or force a code-ensemble phase transition.",
         args: {
           action: tool.schema.enum(["propose", "approve", "force"]),
           phase: tool.schema.enum(["plan", "implement", "review"]).optional(),
@@ -186,12 +215,12 @@ export const codeSwarmPlugin: Plugin = async ({ worktree }, options = {}) => {
             if (!args.phase) {
               return JSON.stringify({ error: "phase is required for propose action" });
             }
-            const state = await proposeCodeSwarmTransition(worktree, config.stateFile, args.phase);
+            const state = await proposeCodeEnsembleTransition(worktree, config.stateFile, args.phase);
             return JSON.stringify(state);
           }
 
           if (args.action === "approve") {
-            const state = await approveCodeSwarmTransition(worktree, config.stateFile, {
+            const state = await approveCodeEnsembleTransition(worktree, config.stateFile, {
               planSummary: args.planSummary,
               reviewFindings: args.reviewFindings,
               openIssues: args.openIssues,
@@ -202,7 +231,7 @@ export const codeSwarmPlugin: Plugin = async ({ worktree }, options = {}) => {
           if (!args.phase) {
             return JSON.stringify({ error: "phase is required for force action" });
           }
-          const state = await forceCodeSwarmPhase(
+          const state = await forceCodeEnsemblePhase(
             worktree,
             config.stateFile,
             args.phase,
@@ -211,14 +240,113 @@ export const codeSwarmPlugin: Plugin = async ({ worktree }, options = {}) => {
           return JSON.stringify(state);
         },
       }),
+      code_ensemble_save_artifact: tool({
+        description: "Save or read a markdown artifact under .code-ensemble/artifacts/. Use after planner returns a plan to persist it. Use 'read' to load it back for incremental updates (e.g. checking off completed items).",
+        args: {
+          action: tool.schema.enum(["save", "read"]).describe("'save' to persist content, 'read' to load existing artifact"),
+          name: tool.schema.string().describe("File name without extension (e.g. 'search-refactor-plan')"),
+          content: tool.schema.string().optional().describe("Markdown content (required for 'save')"),
+          phase: tool.schema.enum(["plan", "implement", "review"]).optional().describe("Phase for subdirectory grouping"),
+        },
+        async execute(args, ctx) {
+          const dir = args.phase
+            ? resolve(ctx.worktree, ".code-ensemble", "artifacts", args.phase)
+            : resolve(ctx.worktree, ".code-ensemble", "artifacts");
+          const filePath = resolve(dir, `${args.name}.md`);
+
+          if (args.action === "read") {
+            if (!existsSync(filePath)) {
+              return JSON.stringify({ error: `Artifact not found: ${filePath}` });
+            }
+            const content = readFileSync(filePath, "utf8");
+            return JSON.stringify({ path: filePath, content });
+          }
+
+          if (!args.content) {
+            return JSON.stringify({ error: "content is required for save action" });
+          }
+          mkdirSync(dir, { recursive: true });
+          writeFileSync(filePath, args.content, "utf8");
+          return JSON.stringify({ saved: filePath });
+        },
+      }),
+      code_ensemble_summarize: tool({
+        description: "Generate a session summary and suggested git commit message from the current plan artifacts and phase state.",
+        args: {},
+        async execute(_args, ctx) {
+          const state = await readCodeEnsembleState(ctx.worktree, config.stateFile);
+          const artifactsDir = resolve(ctx.worktree, ".code-ensemble", "artifacts");
+          const artifactContents: { path: string; content: string }[] = [];
+
+          function walk(dir: string) {
+            if (!existsSync(dir)) return;
+            for (const entry of readdirSync(dir)) {
+              const full = resolve(dir, entry);
+              if (statSync(full).isDirectory()) {
+                walk(full);
+              } else if (entry.endsWith(".md")) {
+                artifactContents.push({
+                  path: relative(ctx.worktree, full),
+                  content: readFileSync(full, "utf8"),
+                });
+              }
+            }
+          }
+          walk(artifactsDir);
+
+          const completedTasks = artifactContents
+            .flatMap((a) => [...a.content.matchAll(/- \[x\] (.+)/g)])
+            .map((m) => m[1])
+            .filter((t): t is string => t != null);
+          const pendingTasks = artifactContents
+            .flatMap((a) => [...a.content.matchAll(/- \[ \] (.+)/g)])
+            .map((m) => m[1])
+            .filter((t): t is string => t != null);
+
+          const summary = [
+            `## Session Summary`,
+            `Phase: ${state.phase}`,
+            `Completed: ${completedTasks.length} tasks`,
+            `${completedTasks.map((t) => `- [x] ${t}`).join("\n")}`,
+            pendingTasks.length > 0 ? `\nPending:\n${pendingTasks.map((t) => `- [ ] ${t}`).join("\n")}` : "",
+            `\nTransitions: ${state.history.length}`,
+          ].join("\n");
+
+          const commitMsg = completedTasks.length > 0
+            ? completedTasks.map((t) => t.replace(/^[^a-zA-Z]+/, "").substring(0, 72)).join("; ")
+            : "chore: code-ensemble session";
+
+          return JSON.stringify({ summary, commitMessage: commitMsg });
+        },
+      }),
     },
     "experimental.chat.system.transform": async (_input, output) => {
-      const state = await readCodeSwarmState(worktree, config.stateFile);
-      output.system.push(`## Current code-swarm state\n${formatStateSummary(state)}`);
+      const state = await readCodeEnsembleState(worktree, config.stateFile);
+      output.system.push(`## Current code-ensemble state\n${formatStateSummary(state)}`);
     },
     "experimental.session.compacting": async (_input, output) => {
-      const state = await readCodeSwarmState(worktree, config.stateFile);
+      const state = await readCodeEnsembleState(worktree, config.stateFile);
       output.context.push(formatCompactionContext(state));
+    },
+    "experimental.provider.small_model": async (input, output) => {
+      const fallbackByProvider: Record<string, string> = {};
+      for (const [role, fallbacks] of Object.entries(config.fallbacks)) {
+        if (fallbacks.length === 0) continue;
+        const splitModel = config.roles[role as RoleName].model.split("/");
+        const primaryProvider = splitModel[0];
+        const fallback = fallbacks[0];
+        if (primaryProvider && fallback && !fallbackByProvider[primaryProvider]) {
+          fallbackByProvider[primaryProvider] = fallback;
+        }
+      }
+      const fallbackModel = fallbackByProvider[input.provider.id];
+      if (fallbackModel) {
+        const [providerID, ...modelParts] = fallbackModel.split("/");
+        output.model = {
+          id: modelParts.join("/"),
+          providerID,
+        } as ModelV2;
+      }
     },
   };
 };

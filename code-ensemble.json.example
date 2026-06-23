@@ -1,14 +1,22 @@
 {
   "models": {
+    "visualizer": "opencode-go/mimo-v2.5",
     "planner": "openai/gpt-5.4",
+    "architect": "openai/gpt-5.5",
     "reviewer": "opencode-go/glm-5.2"
   },
   "variants": {
+    "visualizer": "max",
     "planner": "xhigh",
+    "architect": "xhigh",
     "reviewer": "max"
   },
+  "fallbacks": {
+    "planner": ["opencode-go/glm-5.2"],
+    "architect": ["opencode-go/deepseek-v4-pro"]
+  },
   "prompts": {
-    "orchestrator": "./.code-swarm/orchestrator.md"
+    "director": "./.code-ensemble/director.md"
   },
   "subagents": {
     "disable": [],

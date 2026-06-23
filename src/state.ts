@@ -1,7 +1,7 @@
 import { copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
-import type { CodeSwarmState, Phase } from "./types.js";
+import type { CodeEnsembleState, Phase } from "./types.js";
 
 const validTransitions: Record<Phase, Phase[]> = {
   plan: ["plan", "implement"],
@@ -9,7 +9,7 @@ const validTransitions: Record<Phase, Phase[]> = {
   review: ["implement", "plan"],
 };
 
-export function createDefaultState(): CodeSwarmState {
+export function createDefaultState(): CodeEnsembleState {
   return {
     phase: "plan",
     proposedNextPhase: null,
@@ -28,20 +28,20 @@ function getStatePath(worktree: string, stateFile: string): string {
 async function writeStateFile(
   worktree: string,
   stateFile: string,
-  state: CodeSwarmState,
-): Promise<CodeSwarmState> {
+  state: CodeEnsembleState,
+): Promise<CodeEnsembleState> {
   const fullPath = getStatePath(worktree, stateFile);
   await mkdir(dirname(fullPath), { recursive: true });
   await writeFile(fullPath, JSON.stringify(state, null, 2));
   return state;
 }
 
-export async function readCodeSwarmState(worktree: string, stateFile: string): Promise<CodeSwarmState> {
+export async function readCodeEnsembleState(worktree: string, stateFile: string): Promise<CodeEnsembleState> {
   const fullPath = getStatePath(worktree, stateFile);
 
   try {
     const content = await readFile(fullPath, "utf8");
-    return JSON.parse(content) as CodeSwarmState;
+    return JSON.parse(content) as CodeEnsembleState;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return writeStateFile(worktree, stateFile, createDefaultState());
@@ -58,12 +58,12 @@ export async function readCodeSwarmState(worktree: string, stateFile: string): P
   }
 }
 
-export async function proposeCodeSwarmTransition(
+export async function proposeCodeEnsembleTransition(
   worktree: string,
   stateFile: string,
   nextPhase: Phase,
-): Promise<CodeSwarmState> {
-  const state = await readCodeSwarmState(worktree, stateFile);
+): Promise<CodeEnsembleState> {
+  const state = await readCodeEnsembleState(worktree, stateFile);
 
   if (!validTransitions[state.phase].includes(nextPhase)) {
     throw new Error(`Invalid transition from ${state.phase} to ${nextPhase}`);
@@ -84,12 +84,12 @@ export async function proposeCodeSwarmTransition(
   });
 }
 
-export async function approveCodeSwarmTransition(
+export async function approveCodeEnsembleTransition(
   worktree: string,
   stateFile: string,
   metadata: { planSummary?: string; reviewFindings?: string[]; openIssues?: string[] } = {},
-): Promise<CodeSwarmState> {
-  const state = await readCodeSwarmState(worktree, stateFile);
+): Promise<CodeEnsembleState> {
+  const state = await readCodeEnsembleState(worktree, stateFile);
 
   if (!state.confirmationPending || !state.proposedNextPhase) {
     throw new Error("No pending transition to approve");
@@ -112,7 +112,7 @@ export async function approveCodeSwarmTransition(
           "Review approved"
         : `Implementation moved to ${state.proposedNextPhase}`;
 
-  const nextState: CodeSwarmState = {
+  const nextState: CodeEnsembleState = {
     ...state,
     phase: state.proposedNextPhase,
     proposedNextPhase: null,
@@ -134,13 +134,13 @@ export async function approveCodeSwarmTransition(
   return writeStateFile(worktree, stateFile, nextState);
 }
 
-export async function forceCodeSwarmPhase(
+export async function forceCodeEnsemblePhase(
   worktree: string,
   stateFile: string,
   phase: Phase,
   summary: string,
-): Promise<CodeSwarmState> {
-  const state = await readCodeSwarmState(worktree, stateFile);
+): Promise<CodeEnsembleState> {
+  const state = await readCodeEnsembleState(worktree, stateFile);
 
   if (!validTransitions[state.phase]?.includes(phase)) {
     throw new Error(`Invalid forced transition from ${state.phase} to ${phase}`);
@@ -163,10 +163,10 @@ export async function forceCodeSwarmPhase(
   });
 }
 
-export async function resetCodeSwarmState(
+export async function resetCodeEnsembleState(
   worktree: string,
   stateFile: string,
-): Promise<CodeSwarmState> {
+): Promise<CodeEnsembleState> {
   const fullPath = getStatePath(worktree, stateFile);
 
   try {

@@ -1,4 +1,4 @@
-Use `code_swarm_state` with `action: "get"`.
+Use `code_ensemble_state` with `action: "get"`.
 Summarize:
 1. Current phase
 2. Pending phase confirmation

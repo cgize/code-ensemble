@@ -1,11 +1,11 @@
 {
-  "stateFile": ".opencode/state/code-swarm.json",
+  "stateFile": ".opencode/state/code-ensemble.json",
   "roles": {
-    "orchestrator": {
-      "model": "opencode-go/deepseek-v4-flash",
+    "director": {
+      "model": "opencode-go/deepseek-v4-pro",
       "variant": "max",
       "mode": "primary",
-      "promptFile": "prompts/orchestrator.md"
+      "promptFile": "prompts/director.md"
     },
     "explorer": {
       "model": "opencode-go/deepseek-v4-flash",
@@ -19,14 +19,28 @@
       "mode": "subagent",
       "promptFile": "prompts/researcher.md"
     },
+    "visualizer": {
+      "model": "opencode-go/mimo-v2.5",
+      "variant": "max",
+      "mode": "subagent",
+      "promptFile": "prompts/visualizer.md"
+    },
     "planner": {
       "model": "openai/gpt-5.4",
       "variant": "xhigh",
       "mode": "subagent",
-      "promptFile": "prompts/planner.md"
+      "promptFile": "prompts/planner.md",
+      "fallbacks": ["opencode-go/glm-5.2"]
+    },
+    "architect": {
+      "model": "openai/gpt-5.5",
+      "variant": "xhigh",
+      "mode": "subagent",
+      "promptFile": "prompts/architect.md",
+      "fallbacks": ["opencode-go/deepseek-v4-pro"]
     },
     "implementer": {
-      "model": "opencode-go/kimi-k2.7-code",
+      "model": "opencode-go/deepseek-v4-pro",
       "variant": "max",
       "mode": "subagent",
       "promptFile": "prompts/implementer.md"

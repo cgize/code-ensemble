@@ -5,19 +5,21 @@ import { z } from "zod";
 
 import { getPackageRoot, loadDefaultConfig } from "./defaults.js";
 import type {
-  CodeSwarmPluginOptions,
-  CodeSwarmProjectOverrides,
-  ResolvedCodeSwarmConfig,
+  CodeEnsemblePluginOptions,
+  CodeEnsembleProjectOverrides,
+  ResolvedCodeEnsembleConfig,
   RoleName,
 } from "./types.js";
 
-type SubagentRoleName = Exclude<RoleName, "orchestrator">;
+type SubagentRoleName = Exclude<RoleName, "director">;
 
 const roleNames = [
-  "orchestrator",
+  "director",
   "explorer",
   "researcher",
+  "visualizer",
   "planner",
+  "architect",
   "implementer",
   "reviewer",
   "tester",
@@ -26,15 +28,18 @@ const roleNames = [
 const subagentRoleNames = [
   "explorer",
   "researcher",
+  "visualizer",
   "planner",
+  "architect",
   "implementer",
   "reviewer",
   "tester",
 ] as const satisfies readonly SubagentRoleName[];
 
-const overrideSchema: z.ZodType<CodeSwarmProjectOverrides> = z.object({
+const overrideSchema: z.ZodType<CodeEnsembleProjectOverrides> = z.object({
   models: z.record(z.enum(roleNames), z.string()).optional(),
   variants: z.record(z.enum(roleNames), z.string()).optional(),
+  fallbacks: z.record(z.enum(roleNames), z.array(z.string())).optional(),
   prompts: z.record(z.enum(roleNames), z.string()).optional(),
   subagents: z
     .object({
@@ -54,15 +59,15 @@ function loadTextFile(baseDir: string, relativePath: string): string {
   return readFileSync(fullPath, "utf8");
 }
 
-export function resolveCodeSwarmConfig(
+export function resolveCodeEnsembleConfig(
   worktree: string,
-  options: CodeSwarmPluginOptions = {},
+  options: CodeEnsemblePluginOptions = {},
   metaUrl: string = import.meta.url,
-): ResolvedCodeSwarmConfig {
+): ResolvedCodeEnsembleConfig {
   const defaults = loadDefaultConfig(metaUrl);
   const packageRoot = getPackageRoot(metaUrl);
   const explicitPath = options.configPath ? resolve(worktree, options.configPath) : null;
-  const autoDiscoveryPath = resolve(worktree, "code-swarm.json");
+  const autoDiscoveryPath = resolve(worktree, "code-ensemble.json");
   const overridePath = explicitPath ?? (existsSync(autoDiscoveryPath) ? autoDiscoveryPath : null);
   const overrides =
     overridePath && existsSync(overridePath)
@@ -86,19 +91,25 @@ export function resolveCodeSwarmConfig(
         },
       ];
     }),
-  ) as ResolvedCodeSwarmConfig["roles"];
+  ) as ResolvedCodeEnsembleConfig["roles"];
 
   const commandTemplates = Object.fromEntries(
     Object.entries(defaults.commands).map(([command, relativePath]) => [
       command,
       loadTextFile(resolve(packageRoot, "defaults"), relativePath),
     ]),
-  ) as ResolvedCodeSwarmConfig["commandTemplates"];
+  ) as ResolvedCodeEnsembleConfig["commandTemplates"];
 
   return {
     stateFile: defaults.stateFile,
     roles,
-    promptText: Object.fromEntries(roleNames.map((role) => [role, roles[role].promptText])) as ResolvedCodeSwarmConfig["promptText"],
+    promptText: Object.fromEntries(roleNames.map((role) => [role, roles[role].promptText])) as ResolvedCodeEnsembleConfig["promptText"],
+    fallbacks: Object.fromEntries(
+      roleNames.map((role) => [
+        role,
+        overrides.fallbacks?.[role] ?? defaults.roles[role].fallbacks ?? [],
+      ]),
+    ) as ResolvedCodeEnsembleConfig["fallbacks"],
     commandTemplates,
     disabledSubagents: overrides.subagents?.disable ?? [],
     renamedSubagents: overrides.subagents?.rename ?? {},

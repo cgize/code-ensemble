@@ -7,7 +7,7 @@ export interface TransitionHistoryEntry {
   summary: string;
 }
 
-export interface CodeSwarmState {
+export interface CodeEnsembleState {
   phase: Phase;
   proposedNextPhase: Phase | null;
   confirmationPending: boolean;
@@ -18,10 +18,12 @@ export interface CodeSwarmState {
 }
 
 export type RoleName =
-  | "orchestrator"
+  | "director"
   | "explorer"
   | "researcher"
+  | "visualizer"
   | "planner"
+  | "architect"
   | "implementer"
   | "reviewer"
   | "tester";
@@ -31,9 +33,10 @@ export interface RoleDefaults {
   variant: string;
   mode: "primary" | "subagent";
   promptFile: string;
+  fallbacks?: string[];
 }
 
-export interface CodeSwarmDefaults {
+export interface CodeEnsembleDefaults {
   stateFile: string;
   roles: Record<RoleName, RoleDefaults>;
   commands: Record<"phase-status" | "approve-phase" | "force-phase" | "reset-phase", string>;
@@ -42,17 +45,18 @@ export interface CodeSwarmDefaults {
   };
 }
 
-export interface CodeSwarmPluginOptions {
+export interface CodeEnsemblePluginOptions {
   configPath?: string;
 }
 
-export interface CodeSwarmProjectOverrides {
+export interface CodeEnsembleProjectOverrides {
   models?: Partial<Record<RoleName, string>>;
   variants?: Partial<Record<RoleName, string>>;
+  fallbacks?: Partial<Record<RoleName, string[]>>;
   prompts?: Partial<Record<RoleName, string>>;
   subagents?: {
-    disable?: Array<Exclude<RoleName, "orchestrator">>;
-    rename?: Partial<Record<Exclude<RoleName, "orchestrator">, string>>;
+    disable?: Array<Exclude<RoleName, "director">>;
+    rename?: Partial<Record<Exclude<RoleName, "director">, string>>;
   };
   transitions?: {
     reviewToPlanOnlyWithFindings?: boolean;
@@ -63,13 +67,14 @@ export interface ResolvedRoleConfig extends RoleDefaults {
   promptText: string;
 }
 
-export interface ResolvedCodeSwarmConfig {
+export interface ResolvedCodeEnsembleConfig {
   stateFile: string;
   roles: Record<RoleName, ResolvedRoleConfig>;
   promptText: Record<RoleName, string>;
+  fallbacks: Record<RoleName, string[]>;
   commandTemplates: Record<"phase-status" | "approve-phase" | "force-phase" | "reset-phase", string>;
-  disabledSubagents: Array<Exclude<RoleName, "orchestrator">>;
-  renamedSubagents: Partial<Record<Exclude<RoleName, "orchestrator">, string>>;
+  disabledSubagents: Array<Exclude<RoleName, "director">>;
+  renamedSubagents: Partial<Record<Exclude<RoleName, "director">, string>>;
   transitions: {
     reviewToPlanOnlyWithFindings: boolean;
   };
