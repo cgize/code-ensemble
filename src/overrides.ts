@@ -50,6 +50,8 @@ const overrideSchema: z.ZodType<CodeEnsembleProjectOverrides> = z.object({
   transitions: z
     .object({
       reviewToPlanOnlyWithFindings: z.boolean().optional(),
+      autoLoop: z.boolean().optional(),
+      autoLoopMaxIterations: z.number().int().positive().optional(),
     })
     .optional(),
 });
@@ -117,6 +119,9 @@ export function resolveCodeEnsembleConfig(
       reviewToPlanOnlyWithFindings:
         overrides.transitions?.reviewToPlanOnlyWithFindings ??
         defaults.transitions.reviewToPlanOnlyWithFindings,
+      autoLoop: overrides.transitions?.autoLoop ?? defaults.transitions.autoLoop,
+      autoLoopMaxIterations:
+        overrides.transitions?.autoLoopMaxIterations ?? defaults.transitions.autoLoopMaxIterations,
     },
   };
 }

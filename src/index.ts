@@ -12,6 +12,7 @@ export {
   proposeCodeEnsembleTransition,
   readCodeEnsembleState,
   resetCodeEnsembleState,
+  setCodeEnsembleAutoLoop,
 } from "./state.js";
 export type {
   CodeEnsembleDefaults,

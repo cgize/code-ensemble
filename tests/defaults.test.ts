@@ -127,6 +127,30 @@ describe("resolveCodeEnsembleConfig", () => {
     expect(resolved.fallbacks.implementer).toEqual([]);
   });
 
+  it("resolves auto-loop transitions from defaults and allows overriding", async () => {
+    const root = await mkdtemp(resolve(tmpdir(), "code-ensemble-autoloop-cfg-"));
+    tempDirs.push(root);
+
+    const defaultsOnly = resolveCodeEnsembleConfig(root);
+    expect(defaultsOnly.transitions.autoLoop).toBe(false);
+    expect(defaultsOnly.transitions.autoLoopMaxIterations).toBe(5);
+
+    await writeFile(
+      resolve(root, "code-ensemble.json"),
+      JSON.stringify(
+        {
+          transitions: { autoLoop: true, autoLoopMaxIterations: 7 },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const resolved = resolveCodeEnsembleConfig(root);
+    expect(resolved.transitions.autoLoop).toBe(true);
+    expect(resolved.transitions.autoLoopMaxIterations).toBe(7);
+  });
+
   it("exports ResolvedRoleConfig from the package barrel", () => {
     const testDir = dirname(fileURLToPath(import.meta.url));
     const indexPath = resolve(testDir, "../src/index.ts");

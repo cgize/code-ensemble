@@ -18,9 +18,11 @@ describe("codeEnsemblePlugin", () => {
     expect(cfg.agent.implementer.model).toBe("opencode-go/deepseek-v4-pro");
     expect(cfg.agent.architect.fallbacks).toEqual(["opencode-go/deepseek-v4-pro"]);
     expect(cfg.command["phase-status"].agent).toBe("director");
+    expect(cfg.command["auto-loop"].agent).toBe("director");
     expect(plugin.tool?.code_ensemble_state).toBeDefined();
     expect(plugin.tool?.code_ensemble_transition).toBeDefined();
     expect(plugin.tool?.code_ensemble_save_artifact).toBeDefined();
+    expect(plugin.tool?.code_ensemble_auto_loop).toBeDefined();
   });
 
   it("saves and reads artifacts via code_ensemble_save_artifact", async () => {
@@ -49,6 +51,20 @@ describe("codeEnsemblePlugin", () => {
     expect(JSON.parse(missingResult as string).error).toBeDefined();
   });
 
+  it("toggles auto-loop via the code_ensemble_auto_loop tool", async () => {
+    const plugin = await codeEnsemblePlugin({ worktree: "/tmp/ferio-app" } as never, {});
+    const tool = plugin.tool?.code_ensemble_auto_loop;
+    expect(tool).toBeDefined();
+
+    const on = await tool!.execute({ enabled: true }, { worktree: "/tmp/ferio-app" } as never);
+    const onState = JSON.parse(on as string);
+    expect(onState.autoLoop).toBe(true);
+
+    const off = await tool!.execute({ enabled: false }, { worktree: "/tmp/ferio-app" } as never);
+    const offState = JSON.parse(off as string);
+    expect(offState.autoLoop).toBe(false);
+  });
+
   it("exposes experimental chat system transform and session compacting hooks", async () => {
     const plugin = await codeEnsemblePlugin({ worktree: "/tmp/ferio-app" } as never, {});
 
@@ -74,7 +90,35 @@ describe("code-ensemble prompt helpers", () => {
 
     expect(formatStateSummary(state)).toContain("Current phase: review");
     expect(formatStateSummary(state)).toContain("Pending phase: implement");
+    expect(formatStateSummary(state)).toContain("Auto-loop: off");
     expect(formatCompactionContext(state)).toContain("Add regression coverage for approve-phase");
     expect(formatCompactionContext(state)).toContain("Plan approved");
+  });
+
+  it("includes auto-loop status in the state summary when enabled", () => {
+    const state: CodeEnsembleState = {
+      ...createDefaultState({ autoLoopMaxIterations: 3 }),
+      phase: "review",
+      autoLoop: true,
+      loopIteration: 2,
+    };
+
+    expect(formatStateSummary(state)).toContain("Auto-loop: on (iteration 2/3)");
+  });
+
+  it("shows pending transition metadata in the state summary when confirmation is pending", () => {
+    const state: CodeEnsembleState = {
+      ...createDefaultState(),
+      phase: "plan",
+      proposedNextPhase: "implement",
+      confirmationPending: true,
+      pendingPlanSummary: "Plan awaiting approval",
+      pendingOpenIssues: ["Run smoke tests"],
+    };
+
+    const summary = formatStateSummary(state);
+    expect(summary).toContain("Pending transition metadata:");
+    expect(summary).toContain("Plan summary: Plan awaiting approval");
+    expect(summary).toContain("Open issues: Run smoke tests");
   });
 });

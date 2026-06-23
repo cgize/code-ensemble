@@ -11,6 +11,7 @@ import {
   proposeCodeEnsembleTransition,
   readCodeEnsembleState,
   resetCodeEnsembleState,
+  setCodeEnsembleAutoLoop,
 } from "./state.js";
 import type { CodeEnsemblePluginOptions, CodeEnsembleState, ResolvedCodeEnsembleConfig, RoleName } from "./types.js";
 
@@ -28,9 +29,18 @@ export function formatStateSummary(state: CodeEnsembleState): string {
     `Current phase: ${state.phase}`,
     `Pending phase: ${state.proposedNextPhase ?? "none"}`,
     `Confirmation pending: ${state.confirmationPending ? "yes" : "no"}`,
+    `Auto-loop: ${state.autoLoop ? `on (iteration ${state.loopIteration}/${state.autoLoopMaxIterations})` : "off"}`,
     `Last plan summary: ${state.lastPlanSummary || "none"}`,
     `Last review findings:\n${findings}`,
     `Open issues:\n${issues}`,
+    ...(state.confirmationPending && state.proposedNextPhase
+      ? [
+          `Pending transition metadata:`,
+          `  Plan summary: ${state.pendingPlanSummary || "none"}`,
+          `  Review findings: ${state.pendingReviewFindings.length > 0 ? state.pendingReviewFindings.join("; ") : "none"}`,
+          `  Open issues: ${state.pendingOpenIssues.length > 0 ? state.pendingOpenIssues.join("; ") : "none"}`,
+        ]
+      : []),
   ].join("\n");
 }
 
@@ -177,6 +187,12 @@ function buildAgentDefinitions(config: ResolvedCodeEnsembleConfig) {
 export const codeEnsemblePlugin: Plugin = async ({ worktree }, options = {}) => {
   const config = resolveCodeEnsembleConfig(worktree, options as CodeEnsemblePluginOptions);
 
+  const stateDefaults = {
+    autoLoop: config.transitions.autoLoop,
+    autoLoopMaxIterations: config.transitions.autoLoopMaxIterations,
+    reviewToPlanOnlyWithFindings: config.transitions.reviewToPlanOnlyWithFindings,
+  };
+
   return {
     config: async (cfg) => {
       cfg.agent ??= {};
@@ -192,11 +208,11 @@ export const codeEnsemblePlugin: Plugin = async ({ worktree }, options = {}) => 
         },
         async execute(args) {
           if (args.action === "reset") {
-            const state = await resetCodeEnsembleState(worktree, config.stateFile);
+            const state = await resetCodeEnsembleState(worktree, config.stateFile, stateDefaults);
             return JSON.stringify(state);
           }
 
-          const state = await readCodeEnsembleState(worktree, config.stateFile);
+          const state = await readCodeEnsembleState(worktree, config.stateFile, stateDefaults);
           return JSON.stringify(state);
         },
       }),
@@ -215,16 +231,31 @@ export const codeEnsemblePlugin: Plugin = async ({ worktree }, options = {}) => 
             if (!args.phase) {
               return JSON.stringify({ error: "phase is required for propose action" });
             }
-            const state = await proposeCodeEnsembleTransition(worktree, config.stateFile, args.phase);
+            const state = await proposeCodeEnsembleTransition(
+              worktree,
+              config.stateFile,
+              args.phase,
+              {
+                planSummary: args.planSummary,
+                reviewFindings: args.reviewFindings,
+                openIssues: args.openIssues,
+              },
+              stateDefaults,
+            );
             return JSON.stringify(state);
           }
 
           if (args.action === "approve") {
-            const state = await approveCodeEnsembleTransition(worktree, config.stateFile, {
-              planSummary: args.planSummary,
-              reviewFindings: args.reviewFindings,
-              openIssues: args.openIssues,
-            });
+            const state = await approveCodeEnsembleTransition(
+              worktree,
+              config.stateFile,
+              {
+                planSummary: args.planSummary,
+                reviewFindings: args.reviewFindings,
+                openIssues: args.openIssues,
+              },
+              stateDefaults,
+            );
             return JSON.stringify(state);
           }
 
@@ -236,6 +267,23 @@ export const codeEnsemblePlugin: Plugin = async ({ worktree }, options = {}) => 
             config.stateFile,
             args.phase,
             args.summary ?? `Forced by user to ${args.phase}`,
+            stateDefaults,
+          );
+          return JSON.stringify(state);
+        },
+      }),
+      code_ensemble_auto_loop: tool({
+        description:
+          "Enable or disable fully automatic full-loop mode. When enabled, every proposed phase transition is applied immediately without waiting for user confirmation. The director continues plan -> implement -> review and loops through review -> implement for BLOCKING findings until the iteration cap is reached or the work is clean. The iteration cap is set in code-ensemble.json and cannot be changed at runtime.",
+        args: {
+          enabled: tool.schema.boolean().describe("Whether to turn auto-loop on or off."),
+        },
+        async execute(args) {
+          const state = await setCodeEnsembleAutoLoop(
+            worktree,
+            config.stateFile,
+            { enabled: args.enabled },
+            stateDefaults,
           );
           return JSON.stringify(state);
         },
@@ -274,7 +322,7 @@ export const codeEnsemblePlugin: Plugin = async ({ worktree }, options = {}) => 
         description: "Generate a session summary and suggested git commit message from the current plan artifacts and phase state.",
         args: {},
         async execute(_args, ctx) {
-          const state = await readCodeEnsembleState(ctx.worktree, config.stateFile);
+          const state = await readCodeEnsembleState(ctx.worktree, config.stateFile, stateDefaults);
           const artifactsDir = resolve(ctx.worktree, ".code-ensemble", "artifacts");
           const artifactContents: { path: string; content: string }[] = [];
 
@@ -321,11 +369,11 @@ export const codeEnsemblePlugin: Plugin = async ({ worktree }, options = {}) => 
       }),
     },
     "experimental.chat.system.transform": async (_input, output) => {
-      const state = await readCodeEnsembleState(worktree, config.stateFile);
+      const state = await readCodeEnsembleState(worktree, config.stateFile, stateDefaults);
       output.system.push(`## Current code-ensemble state\n${formatStateSummary(state)}`);
     },
     "experimental.session.compacting": async (_input, output) => {
-      const state = await readCodeEnsembleState(worktree, config.stateFile);
+      const state = await readCodeEnsembleState(worktree, config.stateFile, stateDefaults);
       output.context.push(formatCompactionContext(state));
     },
     "experimental.provider.small_model": async (input, output) => {

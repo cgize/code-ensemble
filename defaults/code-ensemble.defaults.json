@@ -62,9 +62,12 @@
     "phase-status": "commands/phase-status.md",
     "approve-phase": "commands/approve-phase.md",
     "force-phase": "commands/force-phase.md",
-    "reset-phase": "commands/reset-phase.md"
+    "reset-phase": "commands/reset-phase.md",
+    "auto-loop": "commands/auto-loop.md"
   },
   "transitions": {
-    "reviewToPlanOnlyWithFindings": true
+    "reviewToPlanOnlyWithFindings": true,
+    "autoLoop": false,
+    "autoLoopMaxIterations": 5
   }
 }

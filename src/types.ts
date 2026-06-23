@@ -15,6 +15,12 @@ export interface CodeEnsembleState {
   lastPlanSummary: string;
   lastReviewFindings: string[];
   openIssues: string[];
+  autoLoop: boolean;
+  autoLoopMaxIterations: number;
+  loopIteration: number;
+  pendingPlanSummary: string;
+  pendingReviewFindings: string[];
+  pendingOpenIssues: string[];
 }
 
 export type RoleName =
@@ -39,9 +45,11 @@ export interface RoleDefaults {
 export interface CodeEnsembleDefaults {
   stateFile: string;
   roles: Record<RoleName, RoleDefaults>;
-  commands: Record<"phase-status" | "approve-phase" | "force-phase" | "reset-phase", string>;
+  commands: Record<"phase-status" | "approve-phase" | "force-phase" | "reset-phase" | "auto-loop", string>;
   transitions: {
     reviewToPlanOnlyWithFindings: boolean;
+    autoLoop: boolean;
+    autoLoopMaxIterations: number;
   };
 }
 
@@ -60,6 +68,8 @@ export interface CodeEnsembleProjectOverrides {
   };
   transitions?: {
     reviewToPlanOnlyWithFindings?: boolean;
+    autoLoop?: boolean;
+    autoLoopMaxIterations?: number;
   };
 }
 
@@ -72,10 +82,12 @@ export interface ResolvedCodeEnsembleConfig {
   roles: Record<RoleName, ResolvedRoleConfig>;
   promptText: Record<RoleName, string>;
   fallbacks: Record<RoleName, string[]>;
-  commandTemplates: Record<"phase-status" | "approve-phase" | "force-phase" | "reset-phase", string>;
+  commandTemplates: Record<"phase-status" | "approve-phase" | "force-phase" | "reset-phase" | "auto-loop", string>;
   disabledSubagents: Array<Exclude<RoleName, "director">>;
   renamedSubagents: Partial<Record<Exclude<RoleName, "director">, string>>;
   transitions: {
     reviewToPlanOnlyWithFindings: boolean;
+    autoLoop: boolean;
+    autoLoopMaxIterations: number;
   };
 }

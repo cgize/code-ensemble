@@ -45,9 +45,9 @@ The explorer and researcher use `deepseek-v4-flash` because they just need to be
 
 ## Image support
 
-Most cheap code models do not reliably handle images. Instead of forcing every agent onto an expensive vision model, code-ensemble routes visual work to one dedicated subagent: **visualizer**.
+Many code-focused models are text-only and will silently drop any attached image, losing the visual context entirely. Even when some models in the team do accept images, mixing raw screenshots, diagrams, and UI captures across multiple agents makes it hard to keep a single, consistent interpretation of what the user is seeing.
 
-When the user attaches a screenshot, UI capture, diagram, or other image, the director delegates that context to `visualizer`. It uses `opencode-go/mimo-v2.5`, analyzes the image, and returns technical findings the rest of the ensemble can use.
+To keep visual reasoning centralized, code-ensemble isolates that work in one dedicated subagent: **visualizer**. It is the only agent in the team that receives image attachments. The rest of the ensemble works from a structured text description the visualizer produces, so every agent reasons over the same shared interpretation of the image.
 
 Example flow:
 
@@ -106,6 +106,44 @@ When the reviewer marks issues as `BLOCKING`, the director automatically dispatc
 
 ---
 
+## Auto-loop mode
+
+Auto-loop mode lets the director run the full `plan -> implement -> review` cycle without asking for confirmation at each phase transition. When the reviewer marks issues as `BLOCKING`, the director loops back to the implementer automatically, exactly like the auto-feedback loop, but without pausing to ask you to approve the transition.
+
+The loop continues until either:
+- the review is clean (no blocking issues), or
+- the **iteration cap** is reached (default 5).
+
+When the cap is hit, the director stops and asks you how to proceed. You can then disable auto-loop, edit the config cap, or take manual control.
+
+Auto-loop never skips the review phase. It only skips the confirmation step between phases.
+
+### Enabling auto-loop
+
+You can enable it per project in `code-ensemble.json`:
+
+```json
+{
+  "transitions": {
+    "autoLoop": true,
+    "autoLoopMaxIterations": 8
+  }
+}
+```
+
+Or toggle it live during a session:
+
+```
+/auto-loop on
+/auto-loop off
+```
+
+The iteration cap is configured in `code-ensemble.json` and cannot be changed at runtime. If the cap is too low, edit `transitions.autoLoopMaxIterations` in your config and reset the session.
+
+The `autoLoop` config default is applied when the state file is first created or reset. If you change the config after a state already exists, use `/auto-loop on` to activate it for the current session.
+
+---
+
 ## Commands
 
 | Command | What it does |
@@ -114,6 +152,7 @@ When the reviewer marks issues as `BLOCKING`, the director automatically dispatc
 | `/approve-phase` | Confirms the pending phase transition |
 | `/force-phase <phase>` | Jumps directly to a phase (bypasses confirmation) |
 | `/reset-phase` | Resets the entire state machine back to plan |
+| `/auto-loop on\|off` | Toggles fully automatic full-loop mode |
 
 ---
 
@@ -163,7 +202,9 @@ Create a `code-ensemble.json` in your project root:
     }
   },
   "transitions": {
-    "reviewToPlanOnlyWithFindings": true
+    "reviewToPlanOnlyWithFindings": true,
+    "autoLoop": false,
+    "autoLoopMaxIterations": 5
   }
 }
 ```
@@ -174,7 +215,9 @@ Create a `code-ensemble.json` in your project root:
 - **`prompts`**: point any agent to a custom prompt file
 - **`subagents.disable`**: remove agents you don't need
 - **`subagents.rename`**: give agents names that fit your team's vocabulary
-- **`transitions`**: when true, you can only transition from review back to plan if there are findings
+- **`transitions.reviewToPlanOnlyWithFindings`**: when true, you can only transition from review back to plan if there are findings
+- **`transitions.autoLoop`**: when true, the director skips phase-transition confirmations and runs the full loop automatically
+- **`transitions.autoLoopMaxIterations`**: max number of review -> implement fix cycles before the director stops and asks the user (default 5)
 
 ---
 

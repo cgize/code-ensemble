@@ -22,5 +22,10 @@ export function buildCommandDefinitions(config: ResolvedCodeEnsembleConfig) {
       agent: "director",
       template: config.commandTemplates["reset-phase"],
     },
+    "auto-loop": {
+      description: "Toggle the fully automatic full-loop mode.",
+      agent: "director",
+      template: config.commandTemplates["auto-loop"],
+    },
   };
 }
