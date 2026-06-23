@@ -1,4 +1,4 @@
-﻿# @crist/code-ensemble
+﻿# @cgize/code-ensemble
 
 A phase-based multi-agent orchestration plugin for OpenCode. Instead of one model doing everything, `code-ensemble` gives you a team of specialized agents, each with a different model, a different strength, and a clear role.
 
@@ -122,7 +122,7 @@ When the reviewer marks issues as `BLOCKING`, the director automatically dispatc
 ```json
 {
   "plugin": [
-    ["@crist/code-ensemble", { "configPath": "./code-ensemble.json" }]
+    ["@cgize/code-ensemble", { "configPath": "./code-ensemble.json" }]
   ]
 }
 ```
