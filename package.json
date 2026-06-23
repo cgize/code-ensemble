@@ -1,9 +1,13 @@
 {
   "name": "@cgize/code-ensemble",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": false,
   "type": "module",
-  "files": ["dist", "defaults", "README.md"],
+  "files": [
+    "dist",
+    "defaults",
+    "README.md"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
