@@ -65,10 +65,9 @@ user + screenshot
 
 ## Quota fallbacks
 
-OpenAI models (`gpt-5.4`, `gpt-5.5`) have separate quotas from the opencode-go provider. If OpenAI runs out of quota mid-session, the plugin automatically falls back:
-
-- **planner** goes to `glm-5.2` (same agentic quality tier, different provider)
-- **architect** goes to `deepseek-v4-pro` (solid reasoning, no OpenAI dependency)
+External subscription models like GPT or Claude have separate billing from the opencode-go provider. If a subscription model runs out of quota mid-session, the plugin automatically falls back to an opencode-go model:
+- **planner** goes to `glm-5.2` (same agentic quality tier)
+- **architect** goes to `deepseek-v4-pro` (solid reasoning, distinct quota pool)
 
 You can override fallbacks per role in your project config.
 
