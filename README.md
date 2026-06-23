@@ -158,6 +158,14 @@ The `autoLoop` config default is applied when the state file is first created or
 
 ## Installation
 
+Install from npm:
+
+```
+npm install @cgize/code-ensemble
+```
+
+Then add it to your OpenCode plugin config:
+
 ```json
 {
   "plugin": [
