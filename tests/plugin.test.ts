@@ -11,6 +11,34 @@ describe("codeEnsemblePlugin", () => {
     expect(server).toBe(codeEnsemblePlugin);
   });
 
+  it("falls back when npm plugin input omits root directory", async () => {
+    const plugin = await codeEnsemblePlugin({} as never, {});
+    const cfg: Config = {};
+
+    plugin.config?.(cfg);
+
+    expect(cfg.agent?.director).toBeDefined();
+    expect(cfg.command?.["phase-status"]).toBeDefined();
+  });
+
+  it("resolves project.directory when root directory is absent", async () => {
+    const plugin = await codeEnsemblePlugin({ project: { directory: "/tmp/ferio-app" } } as never, {});
+    const cfg: Config = {};
+
+    plugin.config?.(cfg);
+
+    expect(cfg.agent?.director?.model).toBe("opencode-go/deepseek-v4-pro");
+  });
+
+  it("resolves project.worktree when loaded by opencode npm plugin", async () => {
+    const plugin = await codeEnsemblePlugin({ project: { worktree: "/tmp/ferio-app" } } as never, {});
+    const cfg: Config = {};
+
+    plugin.config?.(cfg);
+
+    expect(cfg.agent?.director?.model).toBe("opencode-go/deepseek-v4-pro");
+  });
+
   it("injects agents, commands, and tools", async () => {
     const plugin = await codeEnsemblePlugin({ directory: "/tmp/ferio-app" } as never, {});
     const cfg: Config = {};

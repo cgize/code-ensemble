@@ -15,6 +15,31 @@ import {
 } from "./state.js";
 import type { CodeEnsemblePluginOptions, CodeEnsembleState, ResolvedCodeEnsembleConfig, RoleName } from "./types.js";
 
+function getStringField(value: unknown, key: string): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const field = (value as Record<string, unknown>)[key];
+  return typeof field === "string" && field.length > 0 ? field : undefined;
+}
+
+function resolveProjectDirectory(input: unknown): string {
+  return (
+    getStringField(input, "directory") ??
+    getStringField(input, "worktree") ??
+    getStringField((input as { project?: unknown } | undefined)?.project, "directory") ??
+    getStringField((input as { project?: unknown } | undefined)?.project, "worktree") ??
+    process.cwd()
+  );
+}
+
+function resolveToolDirectory(ctx: unknown, fallback: string): string {
+  return getStringField(ctx, "directory") ?? getStringField(ctx, "worktree") ?? fallback;
+}
+
+function normalizePluginOptions(options: unknown): CodeEnsemblePluginOptions {
+  const configPath = getStringField(options, "configPath");
+  return configPath ? { configPath } : {};
+}
+
 export function formatStateSummary(state: CodeEnsembleState): string {
   const issues =
     state.openIssues.length > 0
@@ -184,8 +209,9 @@ function buildAgentDefinitions(config: ResolvedCodeEnsembleConfig) {
   return agentDefinitions;
 }
 
-export const codeEnsemblePlugin: Plugin = async ({ directory }, options = {}) => {
-  const config = resolveCodeEnsembleConfig(directory, options as CodeEnsemblePluginOptions);
+export const codeEnsemblePlugin: Plugin = async (input, options = {}) => {
+  const projectDirectory = resolveProjectDirectory(input);
+  const config = resolveCodeEnsembleConfig(projectDirectory, normalizePluginOptions(options));
 
   const stateDefaults = {
     autoLoop: config.transitions.autoLoop,
@@ -208,11 +234,11 @@ export const codeEnsemblePlugin: Plugin = async ({ directory }, options = {}) =>
         },
         async execute(args) {
           if (args.action === "reset") {
-            const state = await resetCodeEnsembleState(directory, config.stateFile, stateDefaults);
+            const state = await resetCodeEnsembleState(projectDirectory, config.stateFile, stateDefaults);
             return JSON.stringify(state);
           }
 
-          const state = await readCodeEnsembleState(directory, config.stateFile, stateDefaults);
+          const state = await readCodeEnsembleState(projectDirectory, config.stateFile, stateDefaults);
           return JSON.stringify(state);
         },
       }),
@@ -232,7 +258,7 @@ export const codeEnsemblePlugin: Plugin = async ({ directory }, options = {}) =>
               return JSON.stringify({ error: "phase is required for propose action" });
             }
             const state = await proposeCodeEnsembleTransition(
-              directory,
+              projectDirectory,
               config.stateFile,
               args.phase,
               {
@@ -247,7 +273,7 @@ export const codeEnsemblePlugin: Plugin = async ({ directory }, options = {}) =>
 
           if (args.action === "approve") {
             const state = await approveCodeEnsembleTransition(
-              directory,
+              projectDirectory,
               config.stateFile,
               {
                 planSummary: args.planSummary,
@@ -263,7 +289,7 @@ export const codeEnsemblePlugin: Plugin = async ({ directory }, options = {}) =>
             return JSON.stringify({ error: "phase is required for force action" });
           }
           const state = await forceCodeEnsemblePhase(
-            directory,
+            projectDirectory,
             config.stateFile,
             args.phase,
             args.summary ?? `Forced by user to ${args.phase}`,
@@ -280,7 +306,7 @@ export const codeEnsemblePlugin: Plugin = async ({ directory }, options = {}) =>
         },
         async execute(args) {
           const state = await setCodeEnsembleAutoLoop(
-            directory,
+            projectDirectory,
             config.stateFile,
             { enabled: args.enabled },
             stateDefaults,
@@ -297,9 +323,10 @@ export const codeEnsemblePlugin: Plugin = async ({ directory }, options = {}) =>
           phase: tool.schema.enum(["plan", "implement", "review"]).optional().describe("Phase for subdirectory grouping"),
         },
         async execute(args, ctx) {
+          const directory = resolveToolDirectory(ctx, projectDirectory);
           const dir = args.phase
-            ? resolve(ctx.directory, ".code-ensemble", "artifacts", args.phase)
-            : resolve(ctx.directory, ".code-ensemble", "artifacts");
+            ? resolve(directory, ".code-ensemble", "artifacts", args.phase)
+            : resolve(directory, ".code-ensemble", "artifacts");
           const filePath = resolve(dir, `${args.name}.md`);
 
           if (args.action === "read") {
@@ -322,8 +349,9 @@ export const codeEnsemblePlugin: Plugin = async ({ directory }, options = {}) =>
         description: "Generate a session summary and suggested git commit message from the current plan artifacts and phase state.",
         args: {},
         async execute(_args, ctx) {
-          const state = await readCodeEnsembleState(ctx.directory, config.stateFile, stateDefaults);
-          const artifactsDir = resolve(ctx.directory, ".code-ensemble", "artifacts");
+          const directory = resolveToolDirectory(ctx, projectDirectory);
+          const state = await readCodeEnsembleState(directory, config.stateFile, stateDefaults);
+          const artifactsDir = resolve(directory, ".code-ensemble", "artifacts");
           const artifactContents: { path: string; content: string }[] = [];
 
           function walk(dir: string) {
@@ -334,7 +362,7 @@ export const codeEnsemblePlugin: Plugin = async ({ directory }, options = {}) =>
                 walk(full);
               } else if (entry.endsWith(".md")) {
                 artifactContents.push({
-                  path: relative(ctx.directory, full),
+                  path: relative(directory, full),
                   content: readFileSync(full, "utf8"),
                 });
               }
@@ -369,11 +397,11 @@ export const codeEnsemblePlugin: Plugin = async ({ directory }, options = {}) =>
       }),
     },
     "experimental.chat.system.transform": async (_input, output) => {
-      const state = await readCodeEnsembleState(directory, config.stateFile, stateDefaults);
+      const state = await readCodeEnsembleState(projectDirectory, config.stateFile, stateDefaults);
       output.system.push(`## Current code-ensemble state\n${formatStateSummary(state)}`);
     },
     "experimental.session.compacting": async (_input, output) => {
-      const state = await readCodeEnsembleState(directory, config.stateFile, stateDefaults);
+      const state = await readCodeEnsembleState(projectDirectory, config.stateFile, stateDefaults);
       output.context.push(formatCompactionContext(state));
     },
     "experimental.provider.small_model": async (input, output) => {

@@ -50,6 +50,15 @@ describe("loadDefaultConfig", () => {
     expect(indexSource).toContain('from "./types.js"');
   });
 
+  it("exposes an explicit OpenCode server export in package.json", () => {
+    const testDir = dirname(fileURLToPath(import.meta.url));
+    const packagePath = resolve(testDir, "../package.json");
+    const packageJson = JSON.parse(readFileSync(packagePath, "utf8"));
+
+    expect(packageJson.exports["./server"].import).toBe("./dist/index.js");
+    expect(packageJson.main).toBe("./dist/index.js");
+  });
+
   it("uses strict TypeScript compiler options", () => {
     const testDir = dirname(fileURLToPath(import.meta.url));
     const tsconfigPath = resolve(testDir, "../tsconfig.json");
