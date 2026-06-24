@@ -184,8 +184,8 @@ function buildAgentDefinitions(config: ResolvedCodeEnsembleConfig) {
   return agentDefinitions;
 }
 
-export const codeEnsemblePlugin: Plugin = async ({ worktree }, options = {}) => {
-  const config = resolveCodeEnsembleConfig(worktree, options as CodeEnsemblePluginOptions);
+export const codeEnsemblePlugin: Plugin = async ({ directory }, options = {}) => {
+  const config = resolveCodeEnsembleConfig(directory, options as CodeEnsemblePluginOptions);
 
   const stateDefaults = {
     autoLoop: config.transitions.autoLoop,
@@ -208,11 +208,11 @@ export const codeEnsemblePlugin: Plugin = async ({ worktree }, options = {}) => 
         },
         async execute(args) {
           if (args.action === "reset") {
-            const state = await resetCodeEnsembleState(worktree, config.stateFile, stateDefaults);
+            const state = await resetCodeEnsembleState(directory, config.stateFile, stateDefaults);
             return JSON.stringify(state);
           }
 
-          const state = await readCodeEnsembleState(worktree, config.stateFile, stateDefaults);
+          const state = await readCodeEnsembleState(directory, config.stateFile, stateDefaults);
           return JSON.stringify(state);
         },
       }),
@@ -232,7 +232,7 @@ export const codeEnsemblePlugin: Plugin = async ({ worktree }, options = {}) => 
               return JSON.stringify({ error: "phase is required for propose action" });
             }
             const state = await proposeCodeEnsembleTransition(
-              worktree,
+              directory,
               config.stateFile,
               args.phase,
               {
@@ -247,7 +247,7 @@ export const codeEnsemblePlugin: Plugin = async ({ worktree }, options = {}) => 
 
           if (args.action === "approve") {
             const state = await approveCodeEnsembleTransition(
-              worktree,
+              directory,
               config.stateFile,
               {
                 planSummary: args.planSummary,
@@ -263,7 +263,7 @@ export const codeEnsemblePlugin: Plugin = async ({ worktree }, options = {}) => 
             return JSON.stringify({ error: "phase is required for force action" });
           }
           const state = await forceCodeEnsemblePhase(
-            worktree,
+            directory,
             config.stateFile,
             args.phase,
             args.summary ?? `Forced by user to ${args.phase}`,
@@ -280,7 +280,7 @@ export const codeEnsemblePlugin: Plugin = async ({ worktree }, options = {}) => 
         },
         async execute(args) {
           const state = await setCodeEnsembleAutoLoop(
-            worktree,
+            directory,
             config.stateFile,
             { enabled: args.enabled },
             stateDefaults,
@@ -298,8 +298,8 @@ export const codeEnsemblePlugin: Plugin = async ({ worktree }, options = {}) => 
         },
         async execute(args, ctx) {
           const dir = args.phase
-            ? resolve(ctx.worktree, ".code-ensemble", "artifacts", args.phase)
-            : resolve(ctx.worktree, ".code-ensemble", "artifacts");
+            ? resolve(ctx.directory, ".code-ensemble", "artifacts", args.phase)
+            : resolve(ctx.directory, ".code-ensemble", "artifacts");
           const filePath = resolve(dir, `${args.name}.md`);
 
           if (args.action === "read") {
@@ -322,8 +322,8 @@ export const codeEnsemblePlugin: Plugin = async ({ worktree }, options = {}) => 
         description: "Generate a session summary and suggested git commit message from the current plan artifacts and phase state.",
         args: {},
         async execute(_args, ctx) {
-          const state = await readCodeEnsembleState(ctx.worktree, config.stateFile, stateDefaults);
-          const artifactsDir = resolve(ctx.worktree, ".code-ensemble", "artifacts");
+          const state = await readCodeEnsembleState(ctx.directory, config.stateFile, stateDefaults);
+          const artifactsDir = resolve(ctx.directory, ".code-ensemble", "artifacts");
           const artifactContents: { path: string; content: string }[] = [];
 
           function walk(dir: string) {
@@ -334,7 +334,7 @@ export const codeEnsemblePlugin: Plugin = async ({ worktree }, options = {}) => 
                 walk(full);
               } else if (entry.endsWith(".md")) {
                 artifactContents.push({
-                  path: relative(ctx.worktree, full),
+                  path: relative(ctx.directory, full),
                   content: readFileSync(full, "utf8"),
                 });
               }
@@ -369,11 +369,11 @@ export const codeEnsemblePlugin: Plugin = async ({ worktree }, options = {}) => 
       }),
     },
     "experimental.chat.system.transform": async (_input, output) => {
-      const state = await readCodeEnsembleState(worktree, config.stateFile, stateDefaults);
+      const state = await readCodeEnsembleState(directory, config.stateFile, stateDefaults);
       output.system.push(`## Current code-ensemble state\n${formatStateSummary(state)}`);
     },
     "experimental.session.compacting": async (_input, output) => {
-      const state = await readCodeEnsembleState(worktree, config.stateFile, stateDefaults);
+      const state = await readCodeEnsembleState(directory, config.stateFile, stateDefaults);
       output.context.push(formatCompactionContext(state));
     },
     "experimental.provider.small_model": async (input, output) => {
