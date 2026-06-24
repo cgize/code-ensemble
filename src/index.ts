@@ -1,5 +1,6 @@
 import { codeEnsemblePlugin } from "./register.js";
 
+export const server = codeEnsemblePlugin;
 export default codeEnsemblePlugin;
 export { buildCommandDefinitions } from "./commands.js";
 export { getPackageRoot, loadDefaultConfig } from "./defaults.js";

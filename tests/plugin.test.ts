@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
 import type { Config } from "@opencode-ai/plugin";
 
-import codeEnsemblePlugin from "../src/index";
+import codeEnsemblePlugin, { server } from "../src/index";
 import { createDefaultState } from "../src/state";
 import { formatCompactionContext, formatStateSummary } from "../src/register";
 import type { CodeEnsembleState } from "../src/types";
 
 describe("codeEnsemblePlugin", () => {
+  it("exports a server plugin entrypoint for npm loading", () => {
+    expect(server).toBe(codeEnsemblePlugin);
+  });
+
   it("injects agents, commands, and tools", async () => {
     const plugin = await codeEnsemblePlugin({ directory: "/tmp/ferio-app" } as never, {});
     const cfg: Config = {};
