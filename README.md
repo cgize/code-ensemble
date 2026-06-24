@@ -158,7 +158,11 @@ The `autoLoop` config default is applied when the state file is first created or
 
 ## Installation
 
-See [INSTALL.md](./INSTALL.md).
+Tell OpenCode:
+
+```
+Fetch and follow instructions from https://raw.githubusercontent.com/cgize/code-ensemble/refs/heads/master/INSTALL.md
+```
 
 ---
 
