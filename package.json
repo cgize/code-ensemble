@@ -6,7 +6,8 @@
   "files": [
     "dist",
     "defaults",
-    "README.md"
+    "README.md",
+    "INSTALL.md"
   ],
   "main": "./dist/index.js",
   "module": "./dist/index.js",
