@@ -3,7 +3,7 @@ import { relative, resolve } from "node:path";
 import { tool, type Plugin } from "@opencode-ai/plugin";
 
 import { buildCommandDefinitions } from "./commands.js";
-import { delegateWithQuotaFallback, fallbackAgentName, type FallbackRole } from "./fallback.js";
+import { delegateWithFallback, fallbackAgentName, type FallbackRole } from "./fallback.js";
 import { resolveCodeEnsembleConfig } from "./overrides.js";
 import {
   approveCodeEnsembleTransition,
@@ -290,7 +290,7 @@ export const codeEnsemblePlugin: Plugin = async (input, options = {}) => {
       }),
       code_ensemble_delegate: tool({
         description:
-          "Delegate a planner or architect task with a single quota fallback. Use this instead of task for planner and architect.",
+          "Delegate a planner or architect task with a single model fallback. Use this instead of task for planner and architect.",
         args: {
           role: tool.schema.enum(["planner", "architect"]),
           description: tool.schema.string(),
@@ -301,7 +301,7 @@ export const codeEnsemblePlugin: Plugin = async (input, options = {}) => {
             return JSON.stringify({ error: "code_ensemble_delegate may only be used by the director" });
           }
           try {
-            const result = await delegateWithQuotaFallback(input.client, {
+            const result = await delegateWithFallback(input.client, {
               parentSessionID: ctx.sessionID,
               description: args.description,
               prompt: args.prompt,

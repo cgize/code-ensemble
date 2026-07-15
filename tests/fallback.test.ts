@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { delegateWithQuotaFallback, fallbackAgentName, isQuotaError } from "../src/fallback";
+import { delegateWithFallback, fallbackAgentName, isFallbackEligibleError } from "../src/fallback";
 
 function response(text: string) {
   return { data: { info: {}, parts: [{ type: "text", text }] } };
@@ -11,7 +11,7 @@ describe("quota fallback delegation", () => {
     const create = async () => ({ data: { id: "primary-session" } });
     const prompt = async () => response("primary result");
 
-    const result = await delegateWithQuotaFallback({ session: { create, prompt } }, {
+    const result = await delegateWithFallback({ session: { create, prompt } }, {
       parentSessionID: "parent",
       description: "Create plan",
       prompt: "Inspect the repository",
@@ -41,7 +41,7 @@ describe("quota fallback delegation", () => {
       return response("fallback result");
     };
 
-    const result = await delegateWithQuotaFallback({ session: { create, prompt } }, {
+    const result = await delegateWithFallback({ session: { create, prompt } }, {
       parentSessionID: "parent",
       description: "Design API",
       prompt: "Compare the two API options",
@@ -70,7 +70,7 @@ describe("quota fallback delegation", () => {
     });
 
     await expect(
-      delegateWithQuotaFallback({ session: { create, prompt } }, {
+      delegateWithFallback({ session: { create, prompt } }, {
         parentSessionID: "parent",
         description: "Create plan",
         prompt: "Inspect the repository",
@@ -94,7 +94,7 @@ describe("quota fallback delegation", () => {
     };
 
     await expect(
-      delegateWithQuotaFallback({ session: { create, prompt } }, {
+      delegateWithFallback({ session: { create, prompt } }, {
         parentSessionID: "parent",
         description: "Create plan",
         prompt: "Inspect the repository",
@@ -106,10 +106,34 @@ describe("quota fallback delegation", () => {
     ).rejects.toThrow("Tried openai/gpt-5.6-terra then opencode-go/glm-5.2");
   });
 
-  it("identifies only explicit quota signals", () => {
-    expect(isQuotaError({ data: { statusCode: 429 } })).toBe(true);
-    expect(isQuotaError({ data: { message: "insufficient_quota" } })).toBe(true);
-    expect(isQuotaError({ data: { statusCode: 500, message: "server error" } })).toBe(false);
-    expect(isQuotaError({ data: { message: "request timed out" } })).toBe(false);
+  it("retries when the primary model requires a subscription", async () => {
+    let createCount = 0;
+    const create = async () => ({ data: { id: `session-${++createCount}` } });
+    const prompt = async () =>
+      createCount === 1
+        ? { data: { info: { error: { data: { statusCode: 403, message: "This model requires a ChatGPT subscription" } } }, parts: [] } }
+        : response("fallback result");
+
+    const result = await delegateWithFallback({ session: { create, prompt } }, {
+      parentSessionID: "parent",
+      description: "Create plan",
+      prompt: "Inspect the repository",
+      role: "planner",
+      primaryAgent: "planner",
+      primaryModel: "openai/gpt-5.6-terra",
+      fallbackModel: "opencode-go/glm-5.2",
+    });
+
+    expect(result).toMatchObject({ model: "opencode-go/glm-5.2", usedFallback: true });
+  });
+
+  it("identifies only explicit fallback signals", () => {
+    expect(isFallbackEligibleError({ data: { statusCode: 429 } })).toBe(true);
+    expect(isFallbackEligibleError({ data: { message: "insufficient_quota" } })).toBe(true);
+    expect(isFallbackEligibleError({ data: { message: "model unavailable" } })).toBe(true);
+    expect(isFallbackEligibleError({ data: { message: "subscription required" } })).toBe(true);
+    expect(isFallbackEligibleError({ data: { statusCode: 500, message: "server error" } })).toBe(false);
+    expect(isFallbackEligibleError({ data: { message: "invalid API key" } })).toBe(false);
+    expect(isFallbackEligibleError({ data: { message: "request timed out" } })).toBe(false);
   });
 });

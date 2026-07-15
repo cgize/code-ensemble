@@ -70,11 +70,13 @@ Screenshot or mockup
 
 The defaults favor OpenCode Go for everyday work. ChatGPT models are reserved for planning and higher-risk architecture decisions.
 
-## If a ChatGPT model reaches its quota
+## If a ChatGPT model is unavailable
 
 The planner and architect each have one backup: `opencode-go/glm-5.2`.
 
-If OpenCode reports that the primary ChatGPT request is out of quota or rate-limited, the plugin repeats that delegated task with the backup model. It does not retry unrelated failures such as invalid credentials, cancelled requests, tool errors, timeouts, or server errors.
+If OpenCode reports that the primary ChatGPT request is out of quota, rate-limited, unavailable, blocked by the user's plan, or inaccessible to that account, the plugin repeats that delegated task with the backup model. This lets the workflow continue when a user has not connected or does not have access to the selected ChatGPT model.
+
+It does not retry unrelated failures such as invalid credentials, cancelled requests, tool errors, timeouts, or server errors.
 
 ## Install
 
@@ -129,7 +131,7 @@ Create `code-ensemble.json` in the project root only when you want to change the
 
 - `models`: Choose a different model for an agent.
 - `variants`: Set the reasoning level when the model supports it.
-- `fallbacks`: Set the backup model for planner or architect quota failures.
+- `fallbacks`: Set the backup model for planner or architect quota, access, or availability failures.
 - `subagents.disable`: Remove specialists your project does not need.
 - `subagents.rename`: Rename a specialist for your team's vocabulary.
 - `transitions.autoLoop`: Skip confirmation between phases.
