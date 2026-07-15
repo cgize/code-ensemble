@@ -36,7 +36,7 @@ export type RoleName =
 
 export interface RoleDefaults {
   model: string;
-  variant: string;
+  variant?: string;
   mode: "primary" | "subagent";
   promptFile: string;
   fallbacks?: string[];

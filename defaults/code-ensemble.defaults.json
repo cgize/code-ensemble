@@ -2,58 +2,52 @@
   "stateFile": ".opencode/state/code-ensemble.json",
   "roles": {
     "director": {
-      "model": "opencode-go/deepseek-v4-pro",
-      "variant": "max",
+      "model": "opencode-go/minimax-m3",
       "mode": "primary",
       "promptFile": "prompts/director.md"
     },
     "explorer": {
       "model": "opencode-go/deepseek-v4-flash",
-      "variant": "max",
+      "variant": "high",
       "mode": "subagent",
       "promptFile": "prompts/explorer.md"
     },
     "researcher": {
-      "model": "opencode-go/deepseek-v4-flash",
-      "variant": "max",
+      "model": "opencode-go/qwen3.7-plus",
       "mode": "subagent",
       "promptFile": "prompts/researcher.md"
     },
     "visualizer": {
-      "model": "opencode-go/mimo-v2.5",
-      "variant": "max",
+      "model": "opencode-go/kimi-k2.7-code",
       "mode": "subagent",
       "promptFile": "prompts/visualizer.md"
     },
     "planner": {
-      "model": "openai/gpt-5.4",
+      "model": "openai/gpt-5.6-terra",
       "variant": "xhigh",
       "mode": "subagent",
       "promptFile": "prompts/planner.md",
       "fallbacks": ["opencode-go/glm-5.2"]
     },
     "architect": {
-      "model": "openai/gpt-5.5",
+      "model": "openai/gpt-5.6-sol",
       "variant": "xhigh",
       "mode": "subagent",
       "promptFile": "prompts/architect.md",
-      "fallbacks": ["opencode-go/deepseek-v4-pro"]
+      "fallbacks": ["opencode-go/glm-5.2"]
     },
     "implementer": {
-      "model": "opencode-go/deepseek-v4-pro",
-      "variant": "max",
+      "model": "opencode-go/glm-5.2",
       "mode": "subagent",
       "promptFile": "prompts/implementer.md"
     },
     "reviewer": {
-      "model": "opencode-go/glm-5.2",
-      "variant": "max",
+      "model": "opencode-go/deepseek-v4-pro",
       "mode": "subagent",
       "promptFile": "prompts/reviewer.md"
     },
     "tester": {
-      "model": "opencode-go/minimax-m3",
-      "variant": "max",
+      "model": "opencode-go/mimo-v2.5",
       "mode": "subagent",
       "promptFile": "prompts/tester.md"
     }

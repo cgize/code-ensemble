@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { loadDefaultConfig } from "../src/index.js";
+import { loadDefaultConfig } from "../src/internal.js";
 import { resolveCodeEnsembleConfig } from "../src/overrides";
 
 const tempDirs: string[] = [];
@@ -20,30 +20,27 @@ describe("loadDefaultConfig", () => {
     const config = loadDefaultConfig();
 
     expect(config.stateFile).toBe(".opencode/state/code-ensemble.json");
-    expect(config.roles.planner).toMatchObject({
-      model: "openai/gpt-5.4",
-      variant: "xhigh",
+    expect(Object.fromEntries(Object.entries(config.roles).map(([role, value]) => [role, value.model]))).toEqual({
+      director: "opencode-go/minimax-m3",
+      explorer: "opencode-go/deepseek-v4-flash",
+      researcher: "opencode-go/qwen3.7-plus",
+      visualizer: "opencode-go/kimi-k2.7-code",
+      planner: "openai/gpt-5.6-terra",
+      architect: "openai/gpt-5.6-sol",
+      implementer: "opencode-go/glm-5.2",
+      reviewer: "opencode-go/deepseek-v4-pro",
+      tester: "opencode-go/mimo-v2.5",
     });
+    expect(config.roles.planner.variant).toBe("xhigh");
+    expect(config.roles.architect.variant).toBe("xhigh");
     expect(config.roles.planner.fallbacks).toEqual(["opencode-go/glm-5.2"]);
-    expect(config.roles.architect).toMatchObject({
-      model: "openai/gpt-5.5",
-      variant: "xhigh",
-    });
-    expect(config.roles.architect.fallbacks).toEqual(["opencode-go/deepseek-v4-pro"]);
-    expect(config.roles.visualizer).toMatchObject({
-      model: "opencode-go/mimo-v2.5",
-      variant: "max",
-    });
-    expect(config.roles.implementer).toMatchObject({
-      model: "opencode-go/deepseek-v4-pro",
-      variant: "max",
-    });
+    expect(config.roles.architect.fallbacks).toEqual(["opencode-go/glm-5.2"]);
     expect(config.commands["force-phase"]).toBe("commands/force-phase.md");
   });
 
-  it("uses explicit .js specifiers in barrel exports for published ESM output", () => {
+  it("uses explicit .js specifiers in the internal barrel for published ESM output", () => {
     const testDir = dirname(fileURLToPath(import.meta.url));
-    const indexPath = resolve(testDir, "../src/index.ts");
+    const indexPath = resolve(testDir, "../src/internal.ts");
     const indexSource = readFileSync(indexPath, "utf8");
 
     expect(indexSource).toContain('from "./defaults.js"');
@@ -56,6 +53,7 @@ describe("loadDefaultConfig", () => {
     const packageJson = JSON.parse(readFileSync(packagePath, "utf8"));
 
     expect(packageJson.exports["./server"].import).toBe("./dist/index.js");
+    expect(packageJson.exports["./internal"].import).toBe("./dist/internal.js");
     expect(packageJson.main).toBe("./dist/index.js");
   });
 
@@ -160,9 +158,9 @@ describe("resolveCodeEnsembleConfig", () => {
     expect(resolved.transitions.autoLoopMaxIterations).toBe(7);
   });
 
-  it("exports ResolvedRoleConfig from the package barrel", () => {
+  it("exports ResolvedRoleConfig from the internal barrel", () => {
     const testDir = dirname(fileURLToPath(import.meta.url));
-    const indexPath = resolve(testDir, "../src/index.ts");
+    const indexPath = resolve(testDir, "../src/internal.ts");
     const indexSource = readFileSync(indexPath, "utf8");
 
     expect(indexSource).toContain("ResolvedRoleConfig");

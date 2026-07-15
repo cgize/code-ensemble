@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { tool, type Plugin } from "@opencode-ai/plugin";
-import type { Model as ModelV2 } from "@opencode-ai/sdk/v2";
 
 import { buildCommandDefinitions } from "./commands.js";
+import { delegateWithQuotaFallback, fallbackAgentName, type FallbackRole } from "./fallback.js";
 import { resolveCodeEnsembleConfig } from "./overrides.js";
 import {
   approveCodeEnsembleTransition,
@@ -85,124 +85,97 @@ export function formatCompactionContext(state: CodeEnsembleState): string {
 }
 
 type EnsembleSubagent = Exclude<RoleName, "director">;
+type SubagentSpec = {
+  description: string;
+  permission: { edit: "allow" | "deny"; bash: "allow" | "ask" | "deny"; webfetch?: "allow" };
+};
+
+const SUBAGENT_SPECS: Record<EnsembleSubagent, SubagentSpec> = {
+  explorer: {
+    description: "Fast read-only codebase explorer.",
+    permission: { edit: "deny", bash: "deny" },
+  },
+  researcher: {
+    description: "External docs and dependency researcher.",
+    permission: { edit: "deny", bash: "deny", webfetch: "allow" },
+  },
+  visualizer: {
+    description: "Vision specialist for screenshots, diagrams, and image attachments.",
+    permission: { edit: "deny", bash: "deny" },
+  },
+  planner: {
+    description: "Planning specialist for the plan phase.",
+    permission: { edit: "deny", bash: "deny" },
+  },
+  architect: {
+    description: "Critical decision specialist for architecture and high-risk changes.",
+    permission: { edit: "deny", bash: "deny" },
+  },
+  implementer: {
+    description: "Implementation specialist for the implement phase.",
+    permission: { edit: "allow", bash: "allow" },
+  },
+  reviewer: {
+    description: "Read-only review specialist for the review phase.",
+    permission: { edit: "deny", bash: "ask" },
+  },
+  tester: {
+    description: "Verification specialist for targeted checks.",
+    permission: { edit: "deny", bash: "allow" },
+  },
+};
+
+const SUBAGENT_ROLES = Object.keys(SUBAGENT_SPECS) as EnsembleSubagent[];
+const FALLBACK_ROLES: FallbackRole[] = ["planner", "architect"];
 
 function buildAgentDefinitions(config: ResolvedCodeEnsembleConfig) {
   const getAgentName = (role: EnsembleSubagent) => config.renamedSubagents[role] ?? role;
-
   const isDisabled = (role: EnsembleSubagent) => config.disabledSubagents.includes(role);
+
+  const directorRole = config.roles.director;
+  const taskPermissions: Record<string, "allow" | "deny"> = { "*": "deny" };
+  for (const sub of SUBAGENT_ROLES) {
+    taskPermissions[getAgentName(sub)] = isDisabled(sub) || FALLBACK_ROLES.includes(sub as FallbackRole) ? "deny" : "allow";
+  }
 
   const agentDefinitions: Record<string, unknown> = {
     director: {
       description: "Coordinates the code-ensemble workflow across plan, implement, and review.",
-      mode: config.roles.director.mode,
-      model: config.roles.director.model,
-      variant: config.roles.director.variant,
-      prompt: config.roles.director.promptText,
-      permission: {
-        edit: "deny",
-        bash: "deny",
-        task: {
-          "*": "deny",
-          [getAgentName("explorer")]: isDisabled("explorer") ? "deny" : "allow",
-          [getAgentName("planner")]: isDisabled("planner") ? "deny" : "allow",
-          [getAgentName("architect")]: isDisabled("architect") ? "deny" : "allow",
-          [getAgentName("implementer")]: isDisabled("implementer") ? "deny" : "allow",
-          [getAgentName("reviewer")]: isDisabled("reviewer") ? "deny" : "allow",
-          [getAgentName("tester")]: isDisabled("tester") ? "deny" : "allow",
-          [getAgentName("researcher")]: isDisabled("researcher") ? "deny" : "allow",
-          [getAgentName("visualizer")]: isDisabled("visualizer") ? "deny" : "allow",
-        },
-      },
+      mode: directorRole.mode,
+      model: directorRole.model,
+      ...(directorRole.variant ? { variant: directorRole.variant } : {}),
+      prompt: directorRole.promptText,
+      permission: { edit: "deny", bash: "deny", task: taskPermissions },
     },
   };
 
-  if (!isDisabled("explorer")) {
-    agentDefinitions[getAgentName("explorer")] = {
-      description: "Fast read-only codebase explorer.",
-      mode: config.roles.explorer.mode,
-      model: config.roles.explorer.model,
-      variant: config.roles.explorer.variant,
-      prompt: config.roles.explorer.promptText,
-      permission: { edit: "deny", bash: "deny" },
+  for (const role of SUBAGENT_ROLES) {
+    if (isDisabled(role)) continue;
+    const spec = SUBAGENT_SPECS[role];
+    const roleCfg = config.roles[role];
+    const definition: Record<string, unknown> = {
+      description: spec.description,
+      mode: roleCfg.mode,
+      model: roleCfg.model,
+      ...(roleCfg.variant ? { variant: roleCfg.variant } : {}),
+      prompt: roleCfg.promptText,
+      permission: spec.permission,
     };
+    agentDefinitions[getAgentName(role)] = definition;
   }
 
-  if (!isDisabled("researcher")) {
-    agentDefinitions[getAgentName("researcher")] = {
-      description: "External docs and dependency researcher.",
-      mode: config.roles.researcher.mode,
-      model: config.roles.researcher.model,
-      variant: config.roles.researcher.variant,
-      prompt: config.roles.researcher.promptText,
-      permission: { edit: "deny", bash: "deny", webfetch: "allow" },
-    };
-  }
-
-  if (!isDisabled("visualizer")) {
-    agentDefinitions[getAgentName("visualizer")] = {
-      description: "Vision specialist for screenshots, diagrams, and image attachments.",
-      mode: config.roles.visualizer.mode,
-      model: config.roles.visualizer.model,
-      variant: config.roles.visualizer.variant,
-      prompt: config.roles.visualizer.promptText,
-      permission: { edit: "deny", bash: "deny" },
-    };
-  }
-
-  if (!isDisabled("planner")) {
-    agentDefinitions[getAgentName("planner")] = {
-      description: "Planning specialist for the plan phase.",
-      mode: config.roles.planner.mode,
-      model: config.roles.planner.model,
-      variant: config.roles.planner.variant,
-      prompt: config.roles.planner.promptText,
-      permission: { edit: "deny", bash: "deny" },
-      fallbacks: config.fallbacks.planner,
-    };
-  }
-
-  if (!isDisabled("architect")) {
-    agentDefinitions[getAgentName("architect")] = {
-      description: "Critical decision specialist for architecture and high-risk changes.",
-      mode: config.roles.architect.mode,
-      model: config.roles.architect.model,
-      variant: config.roles.architect.variant,
-      prompt: config.roles.architect.promptText,
-      permission: { edit: "deny", bash: "deny" },
-      fallbacks: config.fallbacks.architect,
-    };
-  }
-
-  if (!isDisabled("implementer")) {
-    agentDefinitions[getAgentName("implementer")] = {
-      description: "Implementation specialist for the implement phase.",
-      mode: config.roles.implementer.mode,
-      model: config.roles.implementer.model,
-      variant: config.roles.implementer.variant,
-      prompt: config.roles.implementer.promptText,
-      permission: { edit: "allow", bash: "allow" },
-    };
-  }
-
-  if (!isDisabled("reviewer")) {
-    agentDefinitions[getAgentName("reviewer")] = {
-      description: "Read-only review specialist for the review phase.",
-      mode: config.roles.reviewer.mode,
-      model: config.roles.reviewer.model,
-      variant: config.roles.reviewer.variant,
-      prompt: config.roles.reviewer.promptText,
-      permission: { edit: "deny", bash: "ask" },
-    };
-  }
-
-  if (!isDisabled("tester")) {
-    agentDefinitions[getAgentName("tester")] = {
-      description: "Verification specialist for targeted checks.",
-      mode: config.roles.tester.mode,
-      model: config.roles.tester.model,
-      variant: config.roles.tester.variant,
-      prompt: config.roles.tester.promptText,
-      permission: { edit: "deny", bash: "allow" },
+  for (const role of FALLBACK_ROLES) {
+    const fallback = config.fallbacks[role][0];
+    if (!fallback || isDisabled(role)) continue;
+    const spec = SUBAGENT_SPECS[role];
+    const roleCfg = config.roles[role];
+    agentDefinitions[fallbackAgentName(role)] = {
+      description: `Quota fallback for ${getAgentName(role)}.`,
+      mode: "subagent",
+      model: fallback,
+      prompt: roleCfg.promptText,
+      permission: spec.permission,
+      hidden: true,
     };
   }
 
@@ -218,6 +191,7 @@ export const codeEnsemblePlugin: Plugin = async (input, options = {}) => {
     autoLoopMaxIterations: config.transitions.autoLoopMaxIterations,
     reviewToPlanOnlyWithFindings: config.transitions.reviewToPlanOnlyWithFindings,
   };
+  const getAgentName = (role: EnsembleSubagent) => config.renamedSubagents[role] ?? role;
 
   return {
     config: async (cfg) => {
@@ -314,6 +288,44 @@ export const codeEnsemblePlugin: Plugin = async (input, options = {}) => {
           return JSON.stringify(state);
         },
       }),
+      code_ensemble_delegate: tool({
+        description:
+          "Delegate a planner or architect task with a single quota fallback. Use this instead of task for planner and architect.",
+        args: {
+          role: tool.schema.enum(["planner", "architect"]),
+          description: tool.schema.string(),
+          prompt: tool.schema.string(),
+        },
+        async execute(args, ctx) {
+          if (ctx.agent !== "director") {
+            return JSON.stringify({ error: "code_ensemble_delegate may only be used by the director" });
+          }
+          try {
+            const result = await delegateWithQuotaFallback(input.client, {
+              parentSessionID: ctx.sessionID,
+              description: args.description,
+              prompt: args.prompt,
+              role: args.role,
+              primaryAgent: getAgentName(args.role),
+              primaryModel: config.roles[args.role].model,
+              fallbackModel: config.fallbacks[args.role][0],
+            });
+            return {
+              title: args.description,
+              metadata: { model: result.model, usedFallback: result.usedFallback, sessionID: result.sessionID },
+              output: [
+                `<task id="${result.sessionID}" state="completed">`,
+                "<task_result>",
+                result.output,
+                "</task_result>",
+                "</task>",
+              ].join("\n"),
+            };
+          } catch (error) {
+            return JSON.stringify({ error: error instanceof Error ? error.message : String(error) });
+          }
+        },
+      }),
       code_ensemble_save_artifact: tool({
         description: "Save or read a markdown artifact under .code-ensemble/artifacts/. Use after planner returns a plan to persist it. Use 'read' to load it back for incremental updates (e.g. checking off completed items).",
         args: {
@@ -403,26 +415,6 @@ export const codeEnsemblePlugin: Plugin = async (input, options = {}) => {
     "experimental.session.compacting": async (_input, output) => {
       const state = await readCodeEnsembleState(projectDirectory, config.stateFile, stateDefaults);
       output.context.push(formatCompactionContext(state));
-    },
-    "experimental.provider.small_model": async (input, output) => {
-      const fallbackByProvider: Record<string, string> = {};
-      for (const [role, fallbacks] of Object.entries(config.fallbacks)) {
-        if (fallbacks.length === 0) continue;
-        const splitModel = config.roles[role as RoleName].model.split("/");
-        const primaryProvider = splitModel[0];
-        const fallback = fallbacks[0];
-        if (primaryProvider && fallback && !fallbackByProvider[primaryProvider]) {
-          fallbackByProvider[primaryProvider] = fallback;
-        }
-      }
-      const fallbackModel = fallbackByProvider[input.provider.id];
-      if (fallbackModel) {
-        const [providerID, ...modelParts] = fallbackModel.split("/");
-        output.model = {
-          id: modelParts.join("/"),
-          providerID,
-        } as ModelV2;
-      }
     },
   };
 };

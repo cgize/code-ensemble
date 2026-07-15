@@ -1,0 +1,15 @@
+*.d.ts
+*.d.ts.map
+*.js.map
+src/
+tests/
+.github/
+.gitignore
+.eslintrc*
+eslint.config.*
+tsconfig*.json
+vitest.config.ts
+vitest.config.*
+code-ensemble.json.example
+*.tgz
+.npmrc

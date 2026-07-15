@@ -1,58 +1,47 @@
 # Installing @cgize/code-ensemble
 
-The plugin is installed as a local OpenCode plugin (not via the npm `plugin` array, which has compatibility limitations with scoped packages).
+The plugin is a normal OpenCode npm plugin. Add it to your `opencode.json` and OpenCode installs, caches, and loads it automatically.
 
-## 1. Create the plugin wrapper
+## 1. Configure opencode.json
 
-`.opencode/plugins/code-ensemble.js`
-
-```js
-import codeEnsemblePlugin from "@cgize/code-ensemble";
-
-export default async function codeEnsembleCompat(input) {
-  return codeEnsemblePlugin(
-    {
-      ...input,
-      worktree: input.worktree ?? input.directory,
-    },
-    { configPath: "./code-ensemble.json" },
-  );
-}
-```
-
-## 2. Create the plugin dependencies manifest
-
-`.opencode/package.json`
+Add the plugin to your project config:
 
 ```json
 {
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "@cgize/code-ensemble": "0.0.6"
-  }
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["@cgize/code-ensemble"]
 }
 ```
 
-## 3. Install plugin dependencies
+The first time you start OpenCode, it will install the plugin via Bun into `~/.cache/opencode/packages/`.
 
-From your project root:
+## 2. (Optional) Override defaults
 
-```
-npm install --prefix .opencode
-```
-
-## 4. Create the code-ensemble config
-
-`code-ensemble.json` (project root)
+Create a `code-ensemble.json` in your project root to swap models, add fallbacks, or change the director prompt:
 
 ```json
 {
-  "models": {},
-  "variants": {},
-  "fallbacks": {},
-  "prompts": {},
-  "subagents": {},
+  "models": {
+    "visualizer": "opencode-go/kimi-k2.7-code",
+    "planner": "openai/gpt-5.6-terra",
+    "architect": "openai/gpt-5.6-sol",
+    "reviewer": "opencode-go/deepseek-v4-pro"
+  },
+  "variants": {
+    "planner": "xhigh",
+    "architect": "xhigh"
+  },
+  "fallbacks": {
+    "planner": ["opencode-go/glm-5.2"],
+    "architect": ["opencode-go/glm-5.2"]
+  },
+  "prompts": {
+    "director": "./.code-ensemble/director.md"
+  },
+  "subagents": {
+    "disable": ["researcher"],
+    "rename": { "tester": "verifier" }
+  },
   "transitions": {
     "reviewToPlanOnlyWithFindings": true,
     "autoLoop": false,
@@ -61,16 +50,10 @@ npm install --prefix .opencode
 }
 ```
 
-## 5. Verify opencode.json
+## 3. Restart OpenCode
 
-Your `opencode.json` (project root) only needs the schema reference:
+The plugin auto-loads with all 9 agents (director, planner, implementer, etc.) and commands (`/phase-status`, `/approve-phase`, etc.).
 
-```json
-{
-  "$schema": "https://opencode.ai/config.json"
-}
-```
+## Internal helpers
 
-## 6. Restart OpenCode
-
-The plugin auto-loads from `.opencode/plugins/` with all 9 agents (director, planner, implementer, etc.) and commands (`/phase-status`, `/approve-phase`, etc.).
+Advanced programmatic access to state machines, config resolution, and prompt formatters is available at the subpath export `@cgize/code-ensemble/internal`. This subpath is not loaded by OpenCode, so it is safe to import from local scripts or tests without affecting the plugin lifecycle.

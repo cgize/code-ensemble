@@ -1,18 +1,25 @@
 import { describe, expect, it } from "vitest";
 import type { Config } from "@opencode-ai/plugin";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 
-import codeEnsemblePlugin, { server } from "../src/index";
+import codeEnsemblePlugin, { codeEnsemblePlugin as pluginModule } from "../src/index";
 import { createDefaultState } from "../src/state";
 import { formatCompactionContext, formatStateSummary } from "../src/register";
 import type { CodeEnsembleState } from "../src/types";
 
+const server = pluginModule.server;
+
 describe("codeEnsemblePlugin", () => {
-  it("exports a server plugin entrypoint for npm loading", () => {
-    expect(server).toBe(codeEnsemblePlugin);
+  it("exports a v1 plugin shape (default = { id, server }) for OpenCode npm loading", () => {
+    expect(typeof server).toBe("function");
+    expect(codeEnsemblePlugin).toMatchObject({ id: "@cgize/code-ensemble" });
+    expect(codeEnsemblePlugin.server).toBe(server);
   });
 
   it("falls back when npm plugin input omits root directory", async () => {
-    const plugin = await codeEnsemblePlugin({} as never, {});
+    const plugin = await server({} as never, {});
     const cfg: Config = {};
 
     plugin.config?.(cfg);
@@ -22,44 +29,82 @@ describe("codeEnsemblePlugin", () => {
   });
 
   it("resolves project.directory when root directory is absent", async () => {
-    const plugin = await codeEnsemblePlugin({ project: { directory: "/tmp/ferio-app" } } as never, {});
+    const plugin = await server({ project: { directory: "/tmp/ferio-app" } } as never, {});
     const cfg: Config = {};
 
     plugin.config?.(cfg);
 
-    expect(cfg.agent?.director?.model).toBe("opencode-go/deepseek-v4-pro");
+    expect(cfg.agent?.director?.model).toBe("opencode-go/minimax-m3");
   });
 
   it("resolves project.worktree when loaded by opencode npm plugin", async () => {
-    const plugin = await codeEnsemblePlugin({ project: { worktree: "/tmp/ferio-app" } } as never, {});
+    const plugin = await server({ project: { worktree: "/tmp/ferio-app" } } as never, {});
     const cfg: Config = {};
 
     plugin.config?.(cfg);
 
-    expect(cfg.agent?.director?.model).toBe("opencode-go/deepseek-v4-pro");
+    expect(cfg.agent?.director?.model).toBe("opencode-go/minimax-m3");
   });
 
   it("injects agents, commands, and tools", async () => {
-    const plugin = await codeEnsemblePlugin({ directory: "/tmp/ferio-app" } as never, {});
+    const plugin = await server({ directory: "/tmp/ferio-app" } as never, {});
     const cfg: Config = {};
 
     plugin.config?.(cfg);
 
-    expect(cfg.agent?.director?.model).toBe("opencode-go/deepseek-v4-pro");
-    expect(cfg.agent?.visualizer?.model).toBe("opencode-go/mimo-v2.5");
-    expect(cfg.agent?.architect?.model).toBe("openai/gpt-5.5");
-    expect(cfg.agent?.implementer?.model).toBe("opencode-go/deepseek-v4-pro");
-    expect(cfg.agent?.architect?.fallbacks).toEqual(["opencode-go/deepseek-v4-pro"]);
+    expect(cfg.agent?.director?.model).toBe("opencode-go/minimax-m3");
+    expect(cfg.agent?.visualizer?.model).toBe("opencode-go/kimi-k2.7-code");
+    expect(cfg.agent?.planner?.model).toBe("openai/gpt-5.6-terra");
+    expect(cfg.agent?.architect?.model).toBe("openai/gpt-5.6-sol");
+    expect(cfg.agent?.implementer?.model).toBe("opencode-go/glm-5.2");
+    expect(cfg.agent?.["code-ensemble-planner-fallback"]?.model).toBe("opencode-go/glm-5.2");
+    expect(cfg.agent?.["code-ensemble-architect-fallback"]?.hidden).toBe(true);
+    expect(cfg.agent?.architect?.fallbacks).toBeUndefined();
     expect(cfg.command?.["phase-status"]?.agent).toBe("director");
     expect(cfg.command?.["auto-loop"]?.agent).toBe("director");
     expect(plugin.tool?.code_ensemble_state).toBeDefined();
     expect(plugin.tool?.code_ensemble_transition).toBeDefined();
     expect(plugin.tool?.code_ensemble_save_artifact).toBeDefined();
     expect(plugin.tool?.code_ensemble_auto_loop).toBeDefined();
+    expect(plugin.tool?.code_ensemble_delegate).toBeDefined();
+    expect(plugin["experimental.provider.small_model"]).toBeUndefined();
+  });
+
+  it("uses a renamed planner in quota-aware delegation", async () => {
+    const root = await mkdtemp(resolve(tmpdir(), "code-ensemble-delegate-"));
+    const agents: string[] = [];
+    try {
+      await writeFile(
+        resolve(root, "code-ensemble.json"),
+        JSON.stringify({ subagents: { rename: { planner: "strategist" } } }),
+      );
+      const plugin = await server({
+        directory: root,
+        client: {
+          session: {
+            create: async () => ({ data: { id: "child-session" } }),
+            prompt: async (input: { body: { agent: string } }) => {
+              agents.push(input.body.agent);
+              return { data: { info: {}, parts: [{ type: "text", text: "plan" }] } };
+            },
+          },
+        },
+      } as never, {});
+
+      const result = await plugin.tool!.code_ensemble_delegate!.execute(
+        { role: "planner", description: "Plan change", prompt: "Inspect the repository" },
+        { agent: "director", sessionID: "parent" } as never,
+      );
+
+      expect(agents).toEqual(["strategist"]);
+      expect(result).toMatchObject({ metadata: { usedFallback: false, model: "openai/gpt-5.6-terra" } });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("saves and reads artifacts via code_ensemble_save_artifact", async () => {
-    const plugin = await codeEnsemblePlugin({ directory: "/tmp/ferio-app" } as never, {});
+    const plugin = await server({ directory: "/tmp/ferio-app" } as never, {});
     const artifactTool = plugin.tool?.code_ensemble_save_artifact;
     expect(artifactTool).toBeDefined();
 
@@ -85,7 +130,7 @@ describe("codeEnsemblePlugin", () => {
   });
 
   it("toggles auto-loop via the code_ensemble_auto_loop tool", async () => {
-    const plugin = await codeEnsemblePlugin({ directory: "/tmp/ferio-app" } as never, {});
+    const plugin = await server({ directory: "/tmp/ferio-app" } as never, {});
     const tool = plugin.tool?.code_ensemble_auto_loop;
     expect(tool).toBeDefined();
 
@@ -99,7 +144,7 @@ describe("codeEnsemblePlugin", () => {
   });
 
   it("exposes experimental chat system transform and session compacting hooks", async () => {
-    const plugin = await codeEnsemblePlugin({ directory: "/tmp/ferio-app" } as never, {});
+    const plugin = await server({ directory: "/tmp/ferio-app" } as never, {});
 
     expect(plugin["experimental.chat.system.transform"]).toBeDefined();
     expect(plugin["experimental.session.compacting"]).toBeDefined();
