@@ -5,6 +5,7 @@
   "type": "module",
   "files": [
     "dist/*.js",
+    "dist/*.d.ts",
     "defaults",
     "README.md",
     "INSTALL.md"

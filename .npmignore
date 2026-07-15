@@ -1,5 +1,3 @@
-*.d.ts
-*.d.ts.map
 *.js.map
 src/
 tests/
@@ -13,3 +11,6 @@ vitest.config.*
 code-ensemble.json.example
 *.tgz
 .npmrc
+.opencode/
+.env
+.env.*
