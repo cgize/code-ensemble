@@ -10,6 +10,13 @@ import { formatCompactionContext, formatStateSummary } from "../src/register";
 import type { CodeEnsembleState } from "../src/types";
 
 const server = pluginModule.server;
+type PermissionAction = "allow" | "ask" | "deny";
+type PermissionRule = PermissionAction | Record<string, PermissionAction>;
+type AgentPermission = Record<string, PermissionRule>;
+
+function getAgentPermission(cfg: Config, role: string): AgentPermission {
+  return cfg.agent?.[role]?.permission as unknown as AgentPermission;
+}
 
 describe("codeEnsemblePlugin", () => {
   it("exports a v1 plugin shape (default = { id, server }) for OpenCode npm loading", () => {
@@ -68,6 +75,84 @@ describe("codeEnsemblePlugin", () => {
     expect(plugin.tool?.code_ensemble_auto_loop).toBeDefined();
     expect(plugin.tool?.code_ensemble_delegate).toBeDefined();
     expect(plugin["experimental.provider.small_model"]).toBeUndefined();
+  });
+
+  it("assigns least-privilege permissions to every subagent role", async () => {
+    const plugin = await server({ directory: "/tmp/ferio-app" } as never, {});
+    const cfg: Config = {};
+
+    plugin.config?.(cfg);
+
+    const roles = ["explorer", "researcher", "visualizer", "planner", "architect", "implementer", "reviewer", "tester"];
+    for (const role of roles) {
+      expect(getAgentPermission(cfg, role)).toMatchObject({
+        "*": "deny",
+        task: "deny",
+        external_directory: "deny",
+        todowrite: "deny",
+        question: "deny",
+        "code_ensemble_*": "deny",
+      });
+    }
+
+    expect(getAgentPermission(cfg, "explorer")).toMatchObject({
+      edit: "deny",
+      bash: "deny",
+      glob: "allow",
+      grep: "allow",
+      lsp: "allow",
+      webfetch: "deny",
+      skill: "deny",
+    });
+    expect(getAgentPermission(cfg, "researcher")).toMatchObject({
+      edit: "deny",
+      bash: "deny",
+      webfetch: "allow",
+      websearch: "allow",
+      lsp: "deny",
+      skill: "allow",
+    });
+    expect(getAgentPermission(cfg, "visualizer")).toMatchObject({
+      edit: "deny",
+      bash: "deny",
+      glob: "deny",
+      grep: "deny",
+      skill: "allow",
+    });
+    expect(getAgentPermission(cfg, "planner")).toMatchObject({
+      edit: "deny",
+      bash: "deny",
+      read: { "*": "allow", "*.env": "deny", "*.env.example": "allow" },
+      lsp: "allow",
+      skill: "allow",
+    });
+    expect(getAgentPermission(cfg, "architect")).toMatchObject({
+      edit: "deny",
+      bash: "deny",
+      webfetch: "allow",
+      websearch: "allow",
+      skill: "allow",
+    });
+    expect(getAgentPermission(cfg, "implementer")).toMatchObject({
+      edit: { "*": "allow", "*.env": "ask", "*.env.example": "allow" },
+      bash: { "*": "allow", "git *": "deny", "git diff*": "allow", "npm publish*": "deny" },
+      skill: "allow",
+    });
+    expect(getAgentPermission(cfg, "reviewer")).toMatchObject({
+      edit: "deny",
+      bash: { "*": "deny", "git status*": "allow", "git diff*": "allow" },
+      webfetch: "allow",
+      websearch: "allow",
+      skill: "allow",
+    });
+    expect(getAgentPermission(cfg, "tester")).toMatchObject({
+      edit: "deny",
+      bash: { "*": "allow", "git *": "deny", "npm install*": "deny", "cargo install*": "deny" },
+      skill: "allow",
+    });
+
+    expect(getAgentPermission(cfg, "code-ensemble-planner-fallback")).toEqual(getAgentPermission(cfg, "planner"));
+    expect(getAgentPermission(cfg, "code-ensemble-architect-fallback")).toEqual(getAgentPermission(cfg, "architect"));
   });
 
   it("uses a renamed planner in quota-aware delegation", async () => {

@@ -85,43 +85,191 @@ export function formatCompactionContext(state: CodeEnsembleState): string {
 }
 
 type EnsembleSubagent = Exclude<RoleName, "director">;
+type PermissionAction = "allow" | "ask" | "deny";
+type PermissionRule = PermissionAction | Record<string, PermissionAction>;
+type SubagentPermission = Record<string, PermissionRule>;
 type SubagentSpec = {
   description: string;
-  permission: { edit: "allow" | "deny"; bash: "allow" | "ask" | "deny"; webfetch?: "allow" };
+  permission: SubagentPermission;
+};
+
+const PROTECTED_READ_PERMISSION: Record<string, PermissionAction> = {
+  "*": "allow",
+  "*.env": "deny",
+  "*.env.*": "deny",
+  "*.env.example": "allow",
+};
+
+const PROTECTED_EDIT_PERMISSION: Record<string, PermissionAction> = {
+  "*": "allow",
+  "*.env": "ask",
+  "*.env.*": "ask",
+  "*.env.example": "allow",
+};
+
+const BASE_SUBAGENT_PERMISSION: SubagentPermission = {
+  "*": "deny",
+  read: "deny",
+  edit: "deny",
+  glob: "deny",
+  grep: "deny",
+  list: "deny",
+  bash: "deny",
+  task: "deny",
+  external_directory: "deny",
+  todowrite: "deny",
+  question: "deny",
+  webfetch: "deny",
+  websearch: "deny",
+  lsp: "deny",
+  doom_loop: "ask",
+  skill: "deny",
+  "code_ensemble_*": "deny",
+};
+
+const CODE_READ_PERMISSION: SubagentPermission = {
+  ...BASE_SUBAGENT_PERMISSION,
+  read: PROTECTED_READ_PERMISSION,
+  glob: "allow",
+  grep: "allow",
+  list: "allow",
+  lsp: "allow",
+};
+
+const READ_ONLY_GIT_COMMANDS: Record<string, PermissionAction> = {
+  "git status*": "allow",
+  "git diff*": "allow",
+  "git log*": "allow",
+  "git show*": "allow",
+  "git blame*": "allow",
+  "git rev-parse*": "allow",
+  "git ls-files*": "allow",
+  "git grep*": "allow",
+  "git remote -v*": "allow",
+};
+
+const READ_ONLY_GIT_PERMISSION: Record<string, PermissionAction> = {
+  "*": "deny",
+  ...READ_ONLY_GIT_COMMANDS,
+};
+
+const IMPLEMENTATION_BASH_PERMISSION: Record<string, PermissionAction> = {
+  "*": "allow",
+  "git *": "deny",
+  ...READ_ONLY_GIT_COMMANDS,
+  rm: "deny",
+  "rm *": "deny",
+  rmdir: "deny",
+  "rmdir *": "deny",
+  del: "deny",
+  "del *": "deny",
+  "Remove-Item*": "deny",
+  "npm publish*": "deny",
+  "pnpm publish*": "deny",
+  "yarn publish*": "deny",
+  "bun publish*": "deny",
+};
+
+const TEST_BASH_PERMISSION: Record<string, PermissionAction> = {
+  ...IMPLEMENTATION_BASH_PERMISSION,
+  "npm install*": "deny",
+  "npm uninstall*": "deny",
+  "npm update*": "deny",
+  "npm ci*": "deny",
+  "npm i": "deny",
+  "npm i *": "deny",
+  "pnpm install*": "deny",
+  "pnpm add*": "deny",
+  "pnpm remove*": "deny",
+  "pnpm update*": "deny",
+  "yarn install*": "deny",
+  "yarn add*": "deny",
+  "yarn remove*": "deny",
+  "yarn upgrade*": "deny",
+  "bun install*": "deny",
+  "bun add*": "deny",
+  "bun remove*": "deny",
+  "bun update*": "deny",
+  "pip install*": "deny",
+  "pip3 install*": "deny",
+  "uv add*": "deny",
+  "uv remove*": "deny",
+  "uv sync*": "deny",
+  "poetry add*": "deny",
+  "poetry remove*": "deny",
+  "poetry install*": "deny",
+  "poetry update*": "deny",
+  "cargo add*": "deny",
+  "cargo remove*": "deny",
+  "cargo install*": "deny",
+  "cargo update*": "deny",
 };
 
 const SUBAGENT_SPECS: Record<EnsembleSubagent, SubagentSpec> = {
   explorer: {
     description: "Fast read-only codebase explorer.",
-    permission: { edit: "deny", bash: "deny" },
+    permission: { ...CODE_READ_PERMISSION },
   },
   researcher: {
     description: "External docs and dependency researcher.",
-    permission: { edit: "deny", bash: "deny", webfetch: "allow" },
+    permission: {
+      ...BASE_SUBAGENT_PERMISSION,
+      read: PROTECTED_READ_PERMISSION,
+      glob: "allow",
+      grep: "allow",
+      list: "allow",
+      webfetch: "allow",
+      websearch: "allow",
+      skill: "allow",
+    },
   },
   visualizer: {
     description: "Vision specialist for screenshots, diagrams, and image attachments.",
-    permission: { edit: "deny", bash: "deny" },
+    permission: {
+      ...BASE_SUBAGENT_PERMISSION,
+      read: PROTECTED_READ_PERMISSION,
+      skill: "allow",
+    },
   },
   planner: {
     description: "Planning specialist for the plan phase.",
-    permission: { edit: "deny", bash: "deny" },
+    permission: { ...CODE_READ_PERMISSION, skill: "allow" },
   },
   architect: {
     description: "Critical decision specialist for architecture and high-risk changes.",
-    permission: { edit: "deny", bash: "deny" },
+    permission: {
+      ...CODE_READ_PERMISSION,
+      webfetch: "allow",
+      websearch: "allow",
+      skill: "allow",
+    },
   },
   implementer: {
     description: "Implementation specialist for the implement phase.",
-    permission: { edit: "allow", bash: "allow" },
+    permission: {
+      ...CODE_READ_PERMISSION,
+      edit: PROTECTED_EDIT_PERMISSION,
+      bash: IMPLEMENTATION_BASH_PERMISSION,
+      skill: "allow",
+    },
   },
   reviewer: {
     description: "Read-only review specialist for the review phase.",
-    permission: { edit: "deny", bash: "ask" },
+    permission: {
+      ...CODE_READ_PERMISSION,
+      bash: READ_ONLY_GIT_PERMISSION,
+      webfetch: "allow",
+      websearch: "allow",
+      skill: "allow",
+    },
   },
   tester: {
     description: "Verification specialist for targeted checks.",
-    permission: { edit: "deny", bash: "allow" },
+    permission: {
+      ...CODE_READ_PERMISSION,
+      bash: TEST_BASH_PERMISSION,
+      skill: "allow",
+    },
   },
 };
 
