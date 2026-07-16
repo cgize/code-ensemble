@@ -127,6 +127,117 @@ describe("quota fallback delegation", () => {
     expect(result).toMatchObject({ model: "opencode-go/glm-5.2", usedFallback: true });
   });
 
+  it("tries configured fallbacks in order and joins every text part", async () => {
+    let attempt = 0;
+    const create = async () => ({ data: { id: `session-${++attempt}` } });
+    const prompt = async () => {
+      if (attempt < 3) {
+        return { data: { info: { error: { data: { statusCode: 429, message: "quota exceeded" } } }, parts: [] } };
+      }
+      return { data: { info: {}, parts: [
+        { type: "text", text: "first paragraph" },
+        { type: "tool", text: "ignored" },
+        { type: "text", text: "second paragraph" },
+      ] } };
+    };
+
+    const result = await delegateWithFallback({ session: { create, prompt } }, {
+      parentSessionID: "parent",
+      description: "Create plan",
+      prompt: "Inspect the repository",
+      role: "planner",
+      primaryAgent: "planner",
+      primaryModel: "openai/primary",
+      fallbackModels: ["openai/fallback-one", "openai/fallback-two"],
+    });
+
+    expect(attempt).toBe(3);
+    expect(result.model).toBe("openai/fallback-two");
+    expect(result.output).toBe("first paragraph\nsecond paragraph");
+  });
+
+  it("aborts a created child and does not start fallbacks after cancellation", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("cancelled"));
+    let createCount = 0;
+    const aborts: string[] = [];
+    const create = async () => ({ data: { id: `session-${++createCount}` } });
+    const prompt = async () => response("should not run");
+    const abort = async ({ path }: { path: { id: string } }) => {
+      aborts.push(path.id);
+      return { data: true };
+    };
+
+    await expect(delegateWithFallback({ session: { create, prompt, abort } }, {
+      parentSessionID: "parent",
+      description: "Create plan",
+      prompt: "Inspect the repository",
+      role: "planner",
+      primaryAgent: "planner",
+      primaryModel: "openai/primary",
+      fallbackModels: ["openai/fallback"],
+      signal: controller.signal,
+    })).rejects.toThrow("cancelled");
+    expect(createCount).toBe(1);
+    expect(aborts).toEqual(["session-1"]);
+  });
+
+  it("does not report success when cancellation races with a prompt response", async () => {
+    const controller = new AbortController();
+    const aborts: string[] = [];
+    const create = async () => ({ data: { id: "race-session" } });
+    const prompt = async () => {
+      controller.abort(new Error("cancelled during prompt"));
+      return response("late success");
+    };
+    const abort = async ({ path }: { path: { id: string } }) => {
+      aborts.push(path.id);
+      return { data: true };
+    };
+
+    await expect(delegateWithFallback({ session: { create, prompt, abort } }, {
+      parentSessionID: "parent",
+      description: "Create plan",
+      prompt: "Inspect the repository",
+      role: "planner",
+      primaryAgent: "planner",
+      primaryModel: "openai/primary",
+      signal: controller.signal,
+    })).rejects.toThrow(/cancelled during prompt/);
+    expect(aborts).toEqual(["race-session"]);
+  });
+
+  it("preserves the cancellation reason when aborting the child fails", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("user cancellation"));
+    const create = async () => ({ data: { id: "abort-failure-session" } });
+    const prompt = async () => response("should not run");
+    const abort = async () => { throw new Error("abort endpoint failed"); };
+
+    await expect(delegateWithFallback({ session: { create, prompt, abort } }, {
+      parentSessionID: "parent",
+      description: "Create plan",
+      prompt: "Inspect the repository",
+      role: "planner",
+      primaryAgent: "planner",
+      primaryModel: "openai/primary",
+      signal: controller.signal,
+    })).rejects.toThrow(/user cancellation/);
+  });
+
+  it("rejects an empty subagent response", async () => {
+    const create = async () => ({ data: { id: "empty-session" } });
+    const prompt = async () => response("   ");
+    await expect(delegateWithFallback({ session: { create, prompt } }, {
+      parentSessionID: "parent",
+      description: "Create plan",
+      prompt: "Inspect the repository",
+      role: "planner",
+      primaryAgent: "planner",
+      primaryModel: "openai/primary",
+    })).rejects.toThrow(/empty subagent response/);
+  });
+
   it("identifies only explicit fallback signals", () => {
     expect(isFallbackEligibleError({ data: { statusCode: 429 } })).toBe(true);
     expect(isFallbackEligibleError({ data: { message: "insufficient_quota" } })).toBe(true);

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -51,6 +51,48 @@ describe("code-ensemble state", () => {
     expect(state.autoLoop).toBe(false);
     expect(state.autoLoopMaxIterations).toBe(5);
     expect(state.loopIteration).toBe(0);
+  });
+
+  it("isolates sessions and migrates the global state once", async () => {
+    const root = await makeRoot("code-ensemble-state-sessions-");
+    await writeJsonState(root, { ...createDefaultState(), lastPlanSummary: "legacy" });
+
+    const first = await readCodeEnsembleState(root, ".opencode/state/code-ensemble.json", {}, "session-a");
+    const second = await readCodeEnsembleState(root, ".opencode/state/code-ensemble.json", {}, "session-b");
+
+    expect(first.lastPlanSummary).toBe("legacy");
+    expect(second.lastPlanSummary).toBe("");
+    const stateFiles = await readdir(join(root, ".opencode", "state"));
+    const migrated = stateFiles.find((entry) => entry.startsWith("code-ensemble.json.migrated."));
+    expect(migrated).toBeDefined();
+    expect(await readFile(join(root, ".opencode", "state", migrated!), "utf8")).toContain("legacy");
+    await expect(readCodeEnsembleState(root, ".opencode/state/code-ensemble.json")).rejects.toThrow(/sessionID is required/);
+  });
+
+  it("prevents legacy internal calls from creating split state after session storage starts", async () => {
+    const root = await makeRoot("code-ensemble-state-session-first-");
+    await readCodeEnsembleState(root, ".opencode/state/code-ensemble.json", {}, "session-a");
+    await expect(readCodeEnsembleState(root, ".opencode/state/code-ensemble.json")).rejects.toThrow(/sessionID is required/);
+    await expect(resetCodeEnsembleState(root, ".opencode/state/code-ensemble.json")).rejects.toThrow(/sessionID is required/);
+  });
+
+  it("serializes concurrent mutations in one session", async () => {
+    const root = await makeRoot("code-ensemble-state-concurrency-");
+    await Promise.all(
+      Array.from({ length: 20 }, (_, index) =>
+        forceCodeEnsemblePhase(
+          root,
+          ".opencode/state/code-ensemble.json",
+          index % 2 === 0 ? "implement" : "review",
+          `transition-${index}`,
+          {},
+          "session-a",
+        ),
+      ),
+    );
+    const state = await readCodeEnsembleState(root, ".opencode/state/code-ensemble.json", {}, "session-a");
+    expect(state.history).toHaveLength(20);
+    expect(new Set(state.history.map((entry) => entry.summary)).size).toBe(20);
   });
 
   it("applies project defaults when the state file is created fresh", async () => {
@@ -121,7 +163,9 @@ describe("code-ensemble state", () => {
     await writeFile(join(root, ".opencode", "state", "code-ensemble.json"), "not-json");
 
     const state = await resetCodeEnsembleState(root, ".opencode/state/code-ensemble.json");
-    const backup = await readFile(join(root, ".opencode", "state", "code-ensemble.json.bak"), "utf8");
+    const stateFiles = await readdir(join(root, ".opencode", "state"));
+    const backupName = stateFiles.find((entry) => entry.startsWith("code-ensemble.json.bak."));
+    const backup = await readFile(join(root, ".opencode", "state", backupName!), "utf8");
 
     expect(state.phase).toBe("plan");
     expect(backup).toBe("not-json");
@@ -357,6 +401,17 @@ describe("auto-loop mode", () => {
 
     expect(state.phase).toBe("plan");
     expect(state.loopIteration).toBe(0);
+  });
+
+  it("force-phase bypasses the normal transition graph", async () => {
+    const root = await makeRoot("code-ensemble-force-direct-");
+    const state = await forceCodeEnsemblePhase(
+      root,
+      ".opencode/state/code-ensemble.json",
+      "review",
+      "Direct command",
+    );
+    expect(state.phase).toBe("review");
   });
 
   it("force-phase to plan clears stale display summaries", async () => {
@@ -639,6 +694,33 @@ describe("reviewToPlanOnlyWithFindings flag", () => {
 });
 
 describe("normalizePersistedState edge cases", () => {
+  it("rejects inherited object keys as phases", async () => {
+    const root = await makeRoot("code-ensemble-norm-inherited-phase-");
+    await writeJsonState(root, { ...createDefaultState(), phase: "constructor" });
+    expect((await readCodeEnsembleState(root, ".opencode/state/code-ensemble.json")).phase).toBe("plan");
+  });
+
+  it("rejects oversized state before parsing it", async () => {
+    const root = await makeRoot("code-ensemble-norm-oversized-");
+    await mkdir(join(root, ".opencode", "state"), { recursive: true });
+    await writeFile(join(root, ".opencode", "state", "code-ensemble.json"), `{"padding":"${"x".repeat(1_100_000)}"}`);
+    await expect(readCodeEnsembleState(root, ".opencode/state/code-ensemble.json")).rejects.toThrow(/exceeds/);
+  });
+
+  it("does not write a normalized state that exceeds the read limit", async () => {
+    const root = await makeRoot("code-ensemble-state-write-limit-");
+    const largeList = Array.from({ length: 100 }, (_, index) => `${index}-${"x".repeat(4_000)}`);
+    await proposeCodeEnsembleTransition(root, ".opencode/state/code-ensemble.json", "implement", { openIssues: largeList });
+    await approveCodeEnsembleTransition(root, ".opencode/state/code-ensemble.json");
+    await forceCodeEnsemblePhase(root, ".opencode/state/code-ensemble.json", "review", "Review");
+
+    await expect(proposeCodeEnsembleTransition(root, ".opencode/state/code-ensemble.json", "implement", {
+      reviewFindings: largeList,
+      openIssues: largeList,
+    })).rejects.toThrow(/exceeds/);
+    expect((await readCodeEnsembleState(root, ".opencode/state/code-ensemble.json")).phase).toBe("review");
+  });
+
   it("drops proposedNextPhase when it is not a valid transition from the current phase", async () => {
     const root = await makeRoot("code-ensemble-norm-transition-");
 

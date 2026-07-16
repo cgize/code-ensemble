@@ -33,7 +33,7 @@ The plan is saved under `.code-ensemble/artifacts/`, so it survives long convers
 
 By default, the plugin pauses between plan, implementation, and review so you can approve the next phase. The director coordinates the work but does not edit files or run commands itself.
 
-Only the implementer can edit. The tester can run checks, and the reviewer can inspect the result without changing it.
+Only the implementer can edit. Shell commands require approval for every specialist, including commands that appear read-only, because shell tools can bypass file protections.
 
 For routine work, you can enable auto-loop. It runs the full plan, implement, and review cycle without asking at every handoff, but it never skips review and stops after the configured number of fix cycles.
 
@@ -72,9 +72,9 @@ The defaults favor OpenCode Go for everyday work. ChatGPT models are reserved fo
 
 ## If a ChatGPT model is unavailable
 
-The planner and architect each have one backup: `opencode-go/glm-5.2`.
+The planner and architect can each have an ordered list of backup models. The defaults use `opencode-go/glm-5.2`.
 
-If OpenCode reports that the primary ChatGPT request is out of quota, rate-limited, unavailable, blocked by the user's plan, or inaccessible to that account, the plugin repeats that delegated task with the backup model. This lets the workflow continue when a user has not connected or does not have access to the selected ChatGPT model.
+If OpenCode reports that a model request is out of quota, rate-limited, unavailable, blocked by the user's plan, or inaccessible to that account, the plugin repeats that delegated task with each configured backup model in order.
 
 It does not retry unrelated failures such as invalid credentials, cancelled requests, tool errors, timeouts, or server errors.
 
@@ -97,7 +97,7 @@ OpenCode installs and loads it when it starts. See [INSTALL.md](INSTALL.md) for 
 |---|---|
 | `/phase-status` | See the current phase, open issues, and latest review findings |
 | `/approve-phase` | Approve the next phase |
-| `/force-phase <phase>` | Move directly to plan, implement, or review |
+| `/force-phase <phase>` | Move directly to plan, implement, or review, bypassing the normal transition graph |
 | `/reset-phase` | Start the workflow over from planning |
 | `/auto-loop on\|off` | Enable or disable automatic phase handoffs |
 
@@ -134,7 +134,8 @@ Create `code-ensemble.json` in the project root only when you want to change the
 - `fallbacks`: Set the backup model for planner or architect quota, access, or availability failures.
 - `subagents.disable`: Remove specialists your project does not need.
 - `subagents.rename`: Rename a specialist for your team's vocabulary.
+- Project prompt paths must resolve inside the worktree, including through symlinks. External prompt files require the trusted plugin option `allowExternalPrompts: true`.
 - `transitions.autoLoop`: Skip confirmation between phases.
 - `transitions.autoLoopMaxIterations`: Limit review-to-implementation fix cycles.
 
-The plugin stores its workflow state in `.opencode/state/code-ensemble.json`.
+The plugin migrates an existing `.opencode/state/code-ensemble.json` and legacy artifacts once, then stores isolated data per root OpenCode conversation below `.opencode/state/` and `.code-ensemble/artifacts/`. Calls to the advanced `./internal` state API should pass a `sessionID` after migration.

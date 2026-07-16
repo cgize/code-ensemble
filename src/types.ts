@@ -55,6 +55,8 @@ export interface CodeEnsembleDefaults {
 
 export interface CodeEnsemblePluginOptions {
   configPath?: string;
+  /** Explicitly opt in to project prompt files outside the worktree. */
+  allowExternalPrompts?: boolean;
 }
 
 export interface CodeEnsembleProjectOverrides {

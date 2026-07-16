@@ -7,16 +7,18 @@ type FallbackClientResponse<T> = {
 
 type FallbackClient = {
   session: {
-    create(input: { body: { parentID: string; title: string } }): Promise<FallbackClientResponse<{ id: string }>>;
+    create(input: { body: { parentID: string; title: string }; signal?: AbortSignal }): Promise<FallbackClientResponse<{ id: string }>>;
     prompt(input: {
       path: { id: string };
       body: { agent: string; parts: Array<{ type: "text"; text: string }> };
+      signal?: AbortSignal;
     }): Promise<
       FallbackClientResponse<{
         info: { error?: unknown };
         parts: Array<{ type: string; text?: string }>;
       }>
     >;
+    abort?(input: { path: { id: string } }): Promise<FallbackClientResponse<boolean>>;
   };
 };
 
@@ -62,8 +64,8 @@ export function isFallbackEligibleError(error: unknown): boolean {
   );
 }
 
-export function fallbackAgentName(role: FallbackRole): string {
-  return `code-ensemble-${role}-fallback`;
+export function fallbackAgentName(role: FallbackRole, index = 1): string {
+  return index === 1 ? `code-ensemble-${role}-fallback` : `code-ensemble-${role}-fallback-${index}`;
 }
 
 async function runAttempt(
@@ -72,21 +74,53 @@ async function runAttempt(
   description: string,
   prompt: string,
   attempt: DelegationAttempt,
+  signal?: AbortSignal,
 ): Promise<Omit<DelegationResult, "model" | "usedFallback">> {
   const created = await client.session.create({
     body: { parentID: parentSessionID, title: `${description} (@${attempt.agent})` },
+    signal,
   });
   if (!created.data) throw created.error ?? new Error("OpenCode did not create the subagent session");
 
-  const response = await client.session.prompt({
-    path: { id: created.data.id },
-    body: { agent: attempt.agent, parts: [{ type: "text", text: prompt }] },
-  });
-  if (!response.data) throw response.error ?? new Error("OpenCode did not return a subagent response");
-  if (response.data.info.error) throw response.data.info.error;
+  const childSessionID = created.data.id;
+  let aborting: Promise<unknown> | undefined;
+  const abortChild = () => {
+    if (!client.session.abort) return Promise.resolve();
+    aborting ??= client.session.abort({ path: { id: childSessionID } });
+    void aborting.catch(() => undefined);
+    return aborting;
+  };
+  const onAbort = () => void abortChild();
+  signal?.addEventListener("abort", onAbort, { once: true });
 
-  const output = [...response.data.parts].reverse().find((part) => part.type === "text")?.text ?? "";
-  return { output, sessionID: created.data.id };
+  try {
+    if (signal?.aborted) {
+      await abortChild().catch(() => undefined);
+      throw signal.reason ?? new Error("Delegation aborted");
+    }
+    const response = await client.session.prompt({
+      path: { id: childSessionID },
+      body: { agent: attempt.agent, parts: [{ type: "text", text: prompt }] },
+      signal,
+    });
+    if (signal?.aborted) {
+      await abortChild().catch(() => undefined);
+      throw signal.reason ?? new Error("Delegation aborted");
+    }
+    if (!response.data) throw response.error ?? new Error("OpenCode did not return a subagent response");
+    if (response.data.info.error) throw response.data.info.error;
+
+    const output = response.data.parts
+      .filter((part): part is { type: string; text: string } => part.type === "text" && typeof part.text === "string")
+      .map((part) => part.text)
+      .join("\n")
+      .trim();
+    if (!output) throw new Error("OpenCode returned an empty subagent response");
+    return { output, sessionID: childSessionID };
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+    if (signal?.aborted) await aborting?.catch(() => undefined);
+  }
 }
 
 export async function delegateWithFallback(
@@ -99,23 +133,32 @@ export async function delegateWithFallback(
     primaryAgent: string;
     primaryModel: string;
     fallbackModel?: string;
+    fallbackModels?: string[];
+    signal?: AbortSignal;
   },
 ): Promise<DelegationResult> {
   const primary = { agent: input.primaryAgent, model: input.primaryModel };
   try {
-    const result = await runAttempt(client, input.parentSessionID, input.description, input.prompt, primary);
+    const result = await runAttempt(client, input.parentSessionID, input.description, input.prompt, primary, input.signal);
     return { ...result, model: primary.model, usedFallback: false };
   } catch (error) {
-    if (!isFallbackEligibleError(error) || !input.fallbackModel) throw error;
+    const fallbackModels = input.fallbackModels ?? (input.fallbackModel ? [input.fallbackModel] : []);
+    if (!isFallbackEligibleError(error) || fallbackModels.length === 0) throw error;
 
-    const fallback = { agent: fallbackAgentName(input.role), model: input.fallbackModel };
-    try {
-      const result = await runAttempt(client, input.parentSessionID, input.description, input.prompt, fallback);
-      return { ...result, model: fallback.model, usedFallback: true };
-    } catch (fallbackError) {
-      throw new Error(
-        `Fallback failed for ${input.role}. Tried ${primary.model} then ${fallback.model}: ${errorText(fallbackError)}`,
-      );
+    let lastError: unknown = error;
+    for (const [index, model] of fallbackModels.entries()) {
+      if (input.signal?.aborted) throw input.signal.reason ?? new Error("Delegation aborted");
+      const fallback = { agent: fallbackAgentName(input.role, index + 1), model };
+      try {
+        const result = await runAttempt(client, input.parentSessionID, input.description, input.prompt, fallback, input.signal);
+        return { ...result, model: fallback.model, usedFallback: true };
+      } catch (fallbackError) {
+        lastError = fallbackError;
+        if (!isFallbackEligibleError(fallbackError)) throw fallbackError;
+      }
     }
+    throw new Error(
+      `Fallback failed for ${input.role}. Tried ${[primary.model, ...fallbackModels].join(" then ")}: ${errorText(lastError)}`,
+    );
   }
 }

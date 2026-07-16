@@ -1,7 +1,19 @@
 {
   "name": "@cgize/code-ensemble",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "private": false,
+  "description": "A session-isolated OpenCode plugin that coordinates a small software team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cgize/code-ensemble.git"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "files": [
     "dist/*.js",
@@ -34,10 +46,12 @@
     "build": "tsc --project tsconfig.build.json",
     "typecheck": "tsc --noEmit --project tsconfig.json",
     "test": "vitest run --config vitest.config.ts",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "prepack": "npm run build",
+    "smoke:package": "node scripts/smoke-package.mjs"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "^1.17.9"
+    "@opencode-ai/plugin": "1.18.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.12.0",

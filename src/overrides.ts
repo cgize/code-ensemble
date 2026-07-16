@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 
 import { getPackageRoot, loadDefaultConfig } from "./defaults.js";
 import type {
@@ -25,6 +25,7 @@ const ROLES = [
 const SUBAGENT_ROLES = ROLES.filter((r): r is SubagentRoleName => r !== "director");
 const ROLE_SET = new Set<string>(ROLES);
 const SUBAGENT_SET = new Set<string>(SUBAGENT_ROLES);
+const FALLBACK_SET = new Set<string>(["planner", "architect"]);
 
 class ConfigValidationError extends Error {
   constructor(path: string, got: unknown, want: string) {
@@ -100,7 +101,7 @@ function parseOverrides(raw: unknown): CodeEnsembleProjectOverrides {
   if (m) out.models = m;
   const v = mapKeys(raw.variants, "variants", ROLE_SET, parseString);
   if (v) out.variants = v;
-  const f = mapKeys(raw.fallbacks, "fallbacks", ROLE_SET, (v, p) => {
+  const f = mapKeys(raw.fallbacks, "fallbacks", FALLBACK_SET, (v, p) => {
     const fallbacks = parseStringArray(v, p);
     return fallbacks.map((model, index) =>
       isModelIdentifier(model) ? model : fail(`${p}[${index}]`, model, "model identifier in provider/model format"),
@@ -121,6 +122,17 @@ function parseOverrides(raw: unknown): CodeEnsembleProjectOverrides {
     if (Object.keys(sub).length > 0) out.subagents = sub;
   }
 
+  const disabled = new Set(subagentsDisable(raw));
+  const names = new Map<string, string>([["director", "director"]]);
+  for (const role of SUBAGENT_ROLES) {
+    if (disabled.has(role)) continue;
+    const name = out.subagents?.rename?.[role] ?? role;
+    if (names.has(name)) fail(`subagents.rename.${role}`, name, "a unique agent name");
+    if (/^code-ensemble-(planner|architect)-fallback(?:-\d+)?$/.test(name))
+      fail(`subagents.rename.${role}`, name, "an agent name outside the reserved fallback namespace");
+    names.set(name, role);
+  }
+
   if (raw.transitions !== undefined) {
     if (!isObject(raw.transitions)) fail("transitions", raw.transitions, "object");
     const t: NonNullable<CodeEnsembleProjectOverrides["transitions"]> = {};
@@ -135,8 +147,8 @@ function parseOverrides(raw: unknown): CodeEnsembleProjectOverrides {
       t.autoLoop = raw.transitions.autoLoop;
     }
     if (raw.transitions.autoLoopMaxIterations !== undefined) {
-      if (!isPosInt(raw.transitions.autoLoopMaxIterations))
-        fail("transitions.autoLoopMaxIterations", raw.transitions.autoLoopMaxIterations, "positive integer");
+      if (!isPosInt(raw.transitions.autoLoopMaxIterations) || raw.transitions.autoLoopMaxIterations > 1_000)
+        fail("transitions.autoLoopMaxIterations", raw.transitions.autoLoopMaxIterations, "integer between 1 and 1000");
       t.autoLoopMaxIterations = raw.transitions.autoLoopMaxIterations;
     }
     if (Object.keys(t).length > 0) out.transitions = t;
@@ -145,8 +157,45 @@ function parseOverrides(raw: unknown): CodeEnsembleProjectOverrides {
   return out;
 }
 
-function loadTextFile(baseDir: string, relativePath: string): string {
-  return readFileSync(isAbsolute(relativePath) ? relativePath : resolve(baseDir, relativePath), "utf8");
+function subagentsDisable(raw: Record<string, unknown>): SubagentRoleName[] {
+  if (!isObject(raw.subagents) || raw.subagents.disable === undefined) return [];
+  return parseRoleNameArray(raw.subagents.disable, "subagents.disable");
+}
+
+function loadTextFile(baseDir: string, filePath: string, allowExternal = false): string {
+  const candidate = isAbsolute(filePath) ? resolve(filePath) : resolve(baseDir, filePath);
+  const lexicalRoot = resolve(baseDir);
+  const lexicalPath = relative(lexicalRoot, candidate);
+  const lexicallyOutside = isAbsolute(lexicalPath) || lexicalPath === ".." || lexicalPath.startsWith(`..${sep}`);
+  if (lexicallyOutside && !allowExternal) {
+    throw new Error(`Project prompt must remain inside the worktree: ${filePath}`);
+  }
+  const root = realpathSync(baseDir);
+  const resolvedFile = realpathSync(candidate);
+  const childPath = relative(root, resolvedFile);
+  const outside = isAbsolute(childPath) || childPath === ".." || childPath.startsWith(`..${sep}`);
+  if (outside && !allowExternal) {
+    throw new Error(`Project prompt must remain inside the worktree: ${filePath}`);
+  }
+  return readFileSync(resolvedFile, "utf8");
+}
+
+function renderDirectorPrompt(
+  prompt: string,
+  renamed: Partial<Record<SubagentRoleName, string>> | undefined,
+  disabled: SubagentRoleName[] | undefined,
+): string {
+  const disabledSet = new Set(disabled ?? []);
+  const routing = SUBAGENT_ROLES
+    .filter((role) => !disabledSet.has(role))
+    .map((role) => `- ${role}: \`${renamed?.[role] ?? role}\``)
+    .join("\n");
+  let rendered = prompt.replace(/\{\{agent:([a-z]+)\}\}/g, (_match, role: string) => renamed?.[role as SubagentRoleName] ?? role);
+  rendered = rendered.replace("{{routing}}", routing || "- No subagents are enabled.");
+  if (!prompt.includes("{{routing}}")) {
+    rendered += `\n\nConfigured subagent names (treat disabled roles as unavailable):\n${routing || "- No subagents are enabled."}\n`;
+  }
+  return rendered;
 }
 
 export function resolveCodeEnsembleConfig(
@@ -168,15 +217,20 @@ export function resolveCodeEnsembleConfig(
     ROLES.map((role) => {
       const r = defaults.roles[role];
       const promptPath = overrides.prompts?.[role]
-        ? resolve(worktree, overrides.prompts[role])
+      ? resolve(worktree, overrides.prompts[role])
         : resolve(packageRoot, "defaults", r.promptFile);
-      return [
+       const promptText = loadTextFile(
+         role === "director" || overrides.prompts?.[role] ? worktree : packageRoot,
+         promptPath,
+         !overrides.prompts?.[role] || options.allowExternalPrompts === true,
+       );
+       return [
         role,
         {
           ...r,
           model: overrides.models?.[role] ?? r.model,
           variant: overrides.variants?.[role] ?? r.variant,
-          promptText: loadTextFile(worktree, promptPath),
+           promptText,
         },
       ];
     }),
@@ -188,6 +242,12 @@ export function resolveCodeEnsembleConfig(
       loadTextFile(resolve(packageRoot, "defaults"), p),
     ]),
   ) as ResolvedCodeEnsembleConfig["commandTemplates"];
+
+  roles.director.promptText = renderDirectorPrompt(
+    roles.director.promptText,
+    overrides.subagents?.rename,
+    overrides.subagents?.disable,
+  );
 
   return {
     stateFile: defaults.stateFile,
