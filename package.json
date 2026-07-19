@@ -1,6 +1,6 @@
 {
   "name": "@cgize/code-ensemble",
-  "version": "0.0.9",
+  "version": "1.0.0",
   "private": false,
   "description": "A session-isolated OpenCode plugin that coordinates a small software team",
   "license": "MIT",
