@@ -1,19 +1,22 @@
 # Installing @cgize/code-ensemble
 
-The plugin is a normal OpenCode npm plugin. Add it to your `opencode.json` and OpenCode installs, caches, and loads it automatically.
+The plugin is a normal OpenCode npm plugin. Install it with OpenCode so the package and configuration are handled together.
 
-## 1. Configure opencode.json
+## 1. Install the plugin
 
-Add the plugin to your project config:
+Run this from the project where you want to use the ensemble:
 
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": ["@cgize/code-ensemble"]
-}
+```sh
+opencode plugin @cgize/code-ensemble@0.0.9
 ```
 
-The first time you start OpenCode, it will install the plugin via Bun into `~/.cache/opencode/packages/`.
+OpenCode installs the package and updates `.opencode/opencode.json` automatically. Pinning the concrete package version prevents an older unversioned cache entry from being reused.
+
+For every project on the machine, install it globally instead:
+
+```sh
+opencode plugin --global @cgize/code-ensemble@0.0.9
+```
 
 ## 2. (Optional) Override defaults
 
@@ -50,9 +53,9 @@ Create a `code-ensemble.json` in your project root to swap models, add fallbacks
 }
 ```
 
-## 3. Restart OpenCode
+## 3. Start OpenCode
 
-The plugin auto-loads with all 9 agents (director, planner, implementer, etc.) and commands (`/phase-status`, `/approve-phase`, etc.).
+The plugin auto-loads with all 9 agents (director, planner, implementer, etc.) and commands (`/phase-status`, `/approve-phase`, etc.). The `director` is a primary agent and appears in OpenCode's agent selector without additional configuration.
 
 ## Internal helpers
 

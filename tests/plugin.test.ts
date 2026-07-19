@@ -72,6 +72,8 @@ describe("codeEnsemblePlugin", () => {
     plugin.config?.(cfg);
 
     expect(cfg.agent?.director?.model).toBe("opencode-go/minimax-m3");
+    expect(cfg.agent?.director?.mode).toBe("primary");
+    expect(cfg.agent?.director?.hidden).not.toBe(true);
     expect(cfg.agent?.visualizer?.model).toBe("opencode-go/kimi-k2.7-code");
     expect(cfg.agent?.planner?.model).toBe("openai/gpt-5.6-terra");
     expect(cfg.agent?.architect?.model).toBe("openai/gpt-5.6-sol");

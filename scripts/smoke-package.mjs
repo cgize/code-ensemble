@@ -20,7 +20,13 @@ try {
   execFileSync(process.execPath, [
     "--input-type=module",
     "--eval",
-    'const plugin = await import("@cgize/code-ensemble"); const internal = await import("@cgize/code-ensemble/internal"); if (plugin.default?.id !== "@cgize/code-ensemble" || typeof plugin.default?.server !== "function" || typeof internal.readCodeEnsembleState !== "function") process.exit(1)',
+    `const plugin = await import("@cgize/code-ensemble");
+     const internal = await import("@cgize/code-ensemble/internal");
+     if (plugin.default?.id !== "@cgize/code-ensemble" || typeof plugin.default?.server !== "function" || typeof internal.readCodeEnsembleState !== "function") process.exit(1);
+     const hooks = await plugin.default.server({ directory: process.cwd(), worktree: process.cwd() }, {});
+     const config = {};
+     await hooks.config(config);
+     if (config.agent?.director?.mode !== "primary" || config.agent.director.hidden === true) process.exit(1);`,
   ], { cwd: installRoot, stdio: "inherit" });
 } finally {
   rmSync(tarball, { force: true });

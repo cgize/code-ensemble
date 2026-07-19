@@ -80,16 +80,13 @@ It does not retry unrelated failures such as invalid credentials, cancelled requ
 
 ## Install
 
-Add the plugin to your project's `opencode.json`:
+Install the plugin through OpenCode:
 
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": ["@cgize/code-ensemble"]
-}
+```sh
+opencode plugin @cgize/code-ensemble@0.0.9
 ```
 
-OpenCode installs and loads it when it starts. See [INSTALL.md](INSTALL.md) for the complete setup guide.
+The command installs the package and updates the project configuration automatically. The concrete version prevents OpenCode from reusing a stale unversioned package cache. Start OpenCode and select `director` from the primary-agent selector. See [INSTALL.md](INSTALL.md) for global installation and customization.
 
 ## Useful commands
 
