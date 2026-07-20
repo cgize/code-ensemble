@@ -3,22 +3,31 @@
 ## Project Installation
 
 ```sh
-opencode plugin @cgize/code-ensemble@1.0.3
+opencode plugin @cgize/code-ensemble@1.0.4
 ```
 
 ## Global Installation
 
 ```sh
-opencode plugin --global @cgize/code-ensemble@1.0.3
+opencode plugin --global @cgize/code-ensemble@1.0.4
 ```
 
-## GitHub Installation
+## Repository Installation
 
-Install the same release directly from the repository:
+Clone the release and install its runtime dependencies:
 
 ```sh
-opencode plugin "github:cgize/code-ensemble#v1.0.3"
+git clone --branch v1.0.4 https://github.com/cgize/code-ensemble.git
+npm --prefix code-ensemble ci --omit=dev
 ```
+
+Then register the cloned package from the project where you use OpenCode:
+
+```sh
+opencode plugin "file:///absolute/path/to/code-ensemble"
+```
+
+OpenCode's plugin command accepts npm packages and local package paths; it does not accept Git dependency specs directly.
 
 Restart OpenCode after installation or configuration changes, then select `director`.
 
