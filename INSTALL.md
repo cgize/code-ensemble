@@ -3,13 +3,13 @@
 ## Project Installation
 
 ```sh
-opencode plugin @cgize/code-ensemble@1.0.2
+opencode plugin @cgize/code-ensemble@1.0.3
 ```
 
 ## Global Installation
 
 ```sh
-opencode plugin --global @cgize/code-ensemble@1.0.2
+opencode plugin --global @cgize/code-ensemble@1.0.3
 ```
 
 ## GitHub Installation
@@ -17,7 +17,7 @@ opencode plugin --global @cgize/code-ensemble@1.0.2
 Install the same release directly from the repository:
 
 ```sh
-opencode plugin "github:cgize/code-ensemble#v1.0.2"
+opencode plugin "github:cgize/code-ensemble#v1.0.3"
 ```
 
 Restart OpenCode after installation or configuration changes, then select `director`.
