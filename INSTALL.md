@@ -1,26 +1,30 @@
 # Installing @cgize/code-ensemble
 
-The plugin is a normal OpenCode npm plugin. Install it with OpenCode so the package and configuration are handled together.
-
-## 1. Install the plugin
-
-Run this from the project where you want to use the ensemble:
+## Project Installation
 
 ```sh
-opencode plugin @cgize/code-ensemble@0.0.9
+opencode plugin @cgize/code-ensemble@1.0.1
 ```
 
-OpenCode installs the package and updates `.opencode/opencode.json` automatically. Pinning the concrete package version prevents an older unversioned cache entry from being reused.
-
-For every project on the machine, install it globally instead:
+## Global Installation
 
 ```sh
-opencode plugin --global @cgize/code-ensemble@0.0.9
+opencode plugin --global @cgize/code-ensemble@1.0.1
 ```
 
-## 2. (Optional) Override defaults
+## GitHub Installation
 
-Create a `code-ensemble.json` in your project root to swap models, add fallbacks, or change the director prompt:
+Install the same release directly from the repository:
+
+```sh
+opencode plugin "github:cgize/code-ensemble#v1.0.1"
+```
+
+Restart OpenCode after installation or configuration changes, then select `director`.
+
+## Optional Configuration
+
+Create `code-ensemble.json` in the worktree root:
 
 ```json
 {
@@ -37,26 +41,8 @@ Create a `code-ensemble.json` in your project root to swap models, add fallbacks
   "fallbacks": {
     "planner": ["opencode-go/glm-5.2"],
     "architect": ["opencode-go/glm-5.2"]
-  },
-  "prompts": {
-    "director": "./.code-ensemble/director.md"
-  },
-  "subagents": {
-    "disable": ["researcher"],
-    "rename": { "tester": "verifier" }
-  },
-  "transitions": {
-    "reviewToPlanOnlyWithFindings": true,
-    "autoLoop": false,
-    "autoLoopMaxIterations": 5
   }
 }
 ```
 
-## 3. Start OpenCode
-
-The plugin auto-loads with all 9 agents (director, planner, implementer, etc.) and commands (`/phase-status`, `/approve-phase`, etc.). The `director` is a primary agent and appears in OpenCode's agent selector without additional configuration.
-
-## Internal helpers
-
-Advanced programmatic access to state machines, config resolution, and prompt formatters is available at the subpath export `@cgize/code-ensemble/internal`. This subpath is not loaded by OpenCode, so it is safe to import from local scripts or tests without affecting the plugin lifecycle.
+Only `models`, `variants`, and `fallbacks` are accepted. The plugin creates `.code-ensemble/TASKS.md` when the director accepts a plan and archives completed plans under `.code-ensemble/plans/`.

@@ -1,6 +1,6 @@
-import { open, lstat, mkdir, readFile, realpath, stat, unlink } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
+import { lstat, mkdir, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import properLockfile from "proper-lockfile";
 
 const LOCK_TIMEOUT_MS = 10_000;
 const STALE_LOCK_MS = 5_000;
@@ -79,60 +79,53 @@ export async function verifySafeParent(root: string, filePath: string): Promise<
   if (info.isSymbolicLink() || !info.isDirectory()) throw new Error(`Path is not a safe directory: ${parent}`);
 }
 
-export async function withFileLock<T>(target: string, operation: () => Promise<T>): Promise<T> {
-  const lockPath = `${target}.lock`;
-  const started = Date.now();
-  const token = randomUUID();
-  const payload = `${process.pid}\n${Date.now()}\n${token}\n`;
-  let handle: Awaited<ReturnType<typeof open>> | undefined;
+function abortError(signal: AbortSignal): Error {
+  return signal.reason instanceof Error ? signal.reason : new Error("Operation aborted");
+}
 
-  while (!handle) {
+async function delay(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) throw abortError(signal);
+  await new Promise<void>((resolveDelay, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolveDelay();
+    }, milliseconds);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(abortError(signal!));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+export async function withFileLock<T>(
+  target: string,
+  operation: () => Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  const started = Date.now();
+  let release: (() => Promise<void>) | undefined;
+
+  while (!release) {
+    if (signal?.aborted) throw abortError(signal);
     try {
-      const candidate = await open(lockPath, "wx");
-      try {
-        await candidate.writeFile(payload, "utf8");
-        handle = candidate;
-      } catch (writeError) {
-        await candidate.close().catch(() => undefined);
-        await unlink(lockPath).catch(() => undefined);
-        throw writeError;
-      }
+      release = await properLockfile.lock(target, {
+        realpath: false,
+        stale: STALE_LOCK_MS,
+        update: 1_000,
+        retries: 0,
+      });
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      try {
-        const info = await stat(lockPath);
-        const contents = await readFile(lockPath, "utf8").catch(() => "");
-        const ownerPID = Number.parseInt(contents.split("\n", 1)[0] ?? "", 10);
-        const validOwner = Number.isInteger(ownerPID) && ownerPID > 0;
-        const ownerAlive = validOwner && isProcessAlive(ownerPID);
-        if ((validOwner && !ownerAlive) || (!validOwner && Date.now() - info.mtimeMs > STALE_LOCK_MS)) {
-          const current = await readFile(lockPath, "utf8").catch(() => undefined);
-          if (current === contents) await unlink(lockPath).catch(() => undefined);
-          continue;
-        }
-      } catch (statError) {
-        if ((statError as NodeJS.ErrnoException).code === "ENOENT") continue;
-        throw statError;
-      }
+      if ((error as NodeJS.ErrnoException).code !== "ELOCKED") throw error;
       if (Date.now() - started >= LOCK_TIMEOUT_MS) throw new Error(`Timed out waiting for state lock: ${target}`);
-      await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
+      await delay(25, signal);
     }
   }
 
   try {
+    if (signal?.aborted) throw abortError(signal);
     return await operation();
   } finally {
-    await handle.close().catch(() => undefined);
-    const current = await readFile(lockPath, "utf8").catch(() => undefined);
-    if (current === payload) await unlink(lockPath).catch(() => undefined);
-  }
-}
-
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+    await release().catch(() => undefined);
   }
 }

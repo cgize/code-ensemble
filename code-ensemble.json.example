@@ -12,17 +12,5 @@
   "fallbacks": {
     "planner": ["opencode-go/glm-5.2"],
     "architect": ["opencode-go/glm-5.2"]
-  },
-  "prompts": {
-    "director": "./.code-ensemble/director.md"
-  },
-  "subagents": {
-    "disable": [],
-    "rename": {
-      "tester": "verifier"
-    }
-  },
-  "transitions": {
-    "reviewToPlanOnlyWithFindings": true
   }
 }

@@ -1,5 +1,4 @@
 {
-  "stateFile": ".opencode/state/code-ensemble.json",
   "roles": {
     "director": {
       "model": "opencode-go/minimax-m3",
@@ -11,11 +10,6 @@
       "variant": "high",
       "mode": "subagent",
       "promptFile": "prompts/explorer.md"
-    },
-    "researcher": {
-      "model": "opencode-go/qwen3.7-plus",
-      "mode": "subagent",
-      "promptFile": "prompts/researcher.md"
     },
     "visualizer": {
       "model": "opencode-go/kimi-k2.7-code",
@@ -45,23 +39,6 @@
       "model": "opencode-go/deepseek-v4-pro",
       "mode": "subagent",
       "promptFile": "prompts/reviewer.md"
-    },
-    "tester": {
-      "model": "opencode-go/mimo-v2.5",
-      "mode": "subagent",
-      "promptFile": "prompts/tester.md"
     }
-  },
-  "commands": {
-    "phase-status": "commands/phase-status.md",
-    "approve-phase": "commands/approve-phase.md",
-    "force-phase": "commands/force-phase.md",
-    "reset-phase": "commands/reset-phase.md",
-    "auto-loop": "commands/auto-loop.md"
-  },
-  "transitions": {
-    "reviewToPlanOnlyWithFindings": true,
-    "autoLoop": false,
-    "autoLoopMaxIterations": 5
   }
 }

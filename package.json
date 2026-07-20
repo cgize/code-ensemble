@@ -1,8 +1,8 @@
 {
   "name": "@cgize/code-ensemble",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": false,
-  "description": "A session-isolated OpenCode plugin that coordinates a small software team",
+  "description": "An OpenCode plugin that coordinates planning, implementation, and review",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -35,27 +35,25 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.js"
-    },
-    "./internal": {
-      "types": "./dist/internal.d.ts",
-      "import": "./dist/internal.js",
-      "require": "./dist/internal.js"
     }
   },
   "scripts": {
+    "prebuild": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "tsc --project tsconfig.build.json",
+    "prepare": "npm run build",
     "typecheck": "tsc --noEmit --project tsconfig.json",
     "test": "vitest run --config vitest.config.ts",
     "lint": "eslint .",
-    "prepack": "npm run build",
     "smoke:package": "node scripts/smoke-package.mjs"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "1.18.1"
+    "@opencode-ai/plugin": "1.18.1",
+    "proper-lockfile": "4.1.2"
   },
   "devDependencies": {
     "@eslint/js": "^9.12.0",
     "@types/node": "^22.0.0",
+    "@types/proper-lockfile": "4.1.4",
     "eslint": "^9.12.0",
     "typescript": "^5.6.0",
     "typescript-eslint": "^8.0.0",
