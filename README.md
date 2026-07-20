@@ -18,7 +18,7 @@ The tasklist is scoped to the worktree, not to one OpenCode conversation. A new 
 
 | Agent | Responsibility | Default model |
 |---|---|---|
-| director | Coordinates work and maintains the shared plan | `opencode-go/minimax-m3` |
+| director | Coordinates work and maintains the shared plan | `opencode-go/deepseek-v4-pro` |
 | explorer | Maps code, tests, and dependencies | `opencode-go/deepseek-v4-flash` |
 | visualizer | Interprets screenshots and diagrams | `opencode-go/kimi-k2.7-code` |
 | planner | Produces executable plans and researches dependencies | `openai/gpt-5.6-terra` |
@@ -28,9 +28,7 @@ The tasklist is scoped to the worktree, not to one OpenCode conversation. A new 
 
 Only implementer can edit application code. The director cannot edit or run shell commands.
 
-## Model Fallbacks
-
-Planner and architect use `delegate`, which runs without blocking the OpenCode UI. If the primary model fails because of quota, rate limits, availability, subscription, or access restrictions, configured fallback models are tried in order. Unrelated errors are not retried.
+Every specialist runs through OpenCode's native `task` tool, so planner and architect appear in the UI like any other subagent.
 
 ## Shared Plan
 
@@ -51,7 +49,7 @@ Revision: **6**
 - [ ] **T003** Review responsive behavior
 ```
 
-The director is the only agent allowed to mutate this file through `tasks`. OpenCode todos may mirror current progress in the UI, but the Markdown file remains the durable source of truth.
+The director is the only agent allowed to mutate this file through `plan`. OpenCode todos may mirror current progress in the UI, but the Markdown file remains the durable source of truth.
 
 ## Install
 
@@ -65,7 +63,7 @@ Restart OpenCode and select `director` from the agent selector.
 
 ## Configuration
 
-Create `code-ensemble.json` in the project root only to override models, variants, or fallbacks:
+Create `code-ensemble.json` in the project root only to override models or variants:
 
 ```json
 {
@@ -76,15 +74,11 @@ Create `code-ensemble.json` in the project root only to override models, variant
   "variants": {
     "planner": "xhigh",
     "architect": "xhigh"
-  },
-  "fallbacks": {
-    "planner": ["opencode-go/glm-5.2"],
-    "architect": ["opencode-go/glm-5.2"]
   }
 }
 ```
 
-Every model identifier must use `provider/model` format. Fallbacks are supported only for planner and architect.
+Every model identifier must use `provider/model` format.
 
 ## Development
 

@@ -46,12 +46,8 @@ Create `code-ensemble.json` in the worktree root:
   "variants": {
     "planner": "xhigh",
     "architect": "xhigh"
-  },
-  "fallbacks": {
-    "planner": ["opencode-go/glm-5.2"],
-    "architect": ["opencode-go/glm-5.2"]
   }
 }
 ```
 
-Only `models`, `variants`, and `fallbacks` are accepted. The plugin creates `.code-ensemble/TASKS.md` when the director accepts a plan and archives completed plans under `.code-ensemble/plans/`.
+Only `models` and `variants` are accepted. The plugin creates `.code-ensemble/TASKS.md` when the director accepts a plan and archives completed plans under `.code-ensemble/plans/`.

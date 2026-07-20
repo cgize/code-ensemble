@@ -63,12 +63,12 @@ describe("codeEnsemblePlugin", () => {
     expect(typeof server).toBe("function");
   });
 
-  it("registers exactly seven agents and two custom tools", async () => {
+  it("registers exactly seven agents and the plan tool", async () => {
     const plugin = await load({ directory: await project() } as never);
     const config: Config = {};
     await plugin.config?.(config);
 
-    expect(Object.keys(config.agent ?? {}).filter((name) => !name.startsWith("code-ensemble-"))).toEqual([
+    expect(Object.keys(config.agent ?? {})).toEqual([
       "director",
       "explorer",
       "visualizer",
@@ -79,11 +79,12 @@ describe("codeEnsemblePlugin", () => {
     ]);
     expect(config.agent?.director?.mode).toBe("primary");
     expect(config.agent?.planner?.model).toBe("openai/gpt-5.6-terra");
-    expect(config.agent?.[fallbackName("planner")]?.hidden).toBe(true);
+    expect(config.agent?.planner?.mode).toBe("subagent");
+    expect(config.agent?.architect?.mode).toBe("subagent");
     expect(config.agent?.researcher).toBeUndefined();
     expect(config.agent?.tester).toBeUndefined();
     expect(config.command).toBeUndefined();
-    expect(Object.keys(plugin.tool ?? {})).toEqual(["delegate", "tasks"]);
+    expect(Object.keys(plugin.tool ?? {})).toEqual(["plan"]);
     expect(plugin.event).toBeUndefined();
     expect(plugin["experimental.chat.system.transform"]).toBeUndefined();
     expect(plugin["experimental.session.compacting"]).toBeUndefined();
@@ -95,248 +96,68 @@ describe("codeEnsemblePlugin", () => {
     await plugin.config?.(config);
     const permission = (role: string) => config.agent?.[role]?.permission as unknown as Record<string, unknown>;
 
-    expect(permission("director")).toMatchObject({ edit: "deny", bash: "deny" });
+    expect(permission("director")).toMatchObject({
+      edit: "deny",
+      bash: "deny",
+      task: {
+        "*": "deny",
+        explorer: "allow",
+        visualizer: "allow",
+        planner: "allow",
+        architect: "allow",
+        implementer: "allow",
+        reviewer: "allow",
+      },
+    });
     expect(permission("explorer")).toMatchObject({ edit: "deny", bash: "deny", glob: "allow" });
     expect(permission("planner")).toMatchObject({ edit: "deny", bash: "deny", webfetch: "allow" });
     expect(permission("architect")).toMatchObject({ edit: "deny", bash: "deny", websearch: "allow" });
     expect(permission("implementer")).toMatchObject({ edit: { "*": "allow", "*.env": "ask" } });
     expect(permission("reviewer")).toMatchObject({ edit: "deny", bash: { "*": "ask" } });
     for (const role of ["explorer", "visualizer", "planner", "architect", "implementer", "reviewer"]) {
-      expect(permission(role)).toMatchObject({ task: "deny", tasks: "deny", delegate: "deny" });
+      expect(permission(role)).toMatchObject({ task: "deny", plan: "deny" });
     }
-  });
-
-  it("returns immediately and delivers an ordered fallback result", async () => {
-    const agents: string[] = [];
-    let releaseFallback!: () => void;
-    const fallbackGate = new Promise<void>((resolve) => {
-      releaseFallback = resolve;
-    });
-    let delivered!: (text: string) => void;
-    const notification = new Promise<string>((resolve) => {
-      delivered = resolve;
-    });
-    let attempt = 0;
-    let deliveries = 0;
-    const deliveryMessageIDs: string[] = [];
-    const plugin = await load({
-      directory: await project(),
-      client: {
-        session: {
-          create: async () => ({ data: { id: `child-${++attempt}` } }),
-          prompt: async (input: { body: { agent: string } }) => {
-            agents.push(input.body.agent);
-            if (attempt === 1) {
-              return { data: { info: { error: { data: { statusCode: 429, message: "quota exceeded" } } }, parts: [] } };
-            }
-            await fallbackGate;
-            return { data: { info: {}, parts: [{ type: "text", text: "fallback plan" }] } };
-          },
-          status: async () => ({ data: { parent: { type: "idle" } } }),
-          promptAsync: async (input: { body: { messageID: string; parts: Array<{ text: string }> } }) => {
-            deliveries += 1;
-            deliveryMessageIDs.push(input.body.messageID);
-            if (deliveries === 1) return { error: new Error("parent busy") };
-            delivered(input.body.parts[0]!.text);
-            return {};
-          },
-        },
-      },
-    } as never);
-
-    const result = await plugin.tool!.delegate!.execute(
-      { role: "planner", description: "Plan change", prompt: "Inspect repository" },
-      toolContext("director", "parent"),
-    );
-    expect(result).toMatchObject({ metadata: { background: true }, title: "Delegate to planner · Plan change" });
-    expect(outputOf(result)).toContain("Delegating to planner in the background");
-
-    releaseFallback();
-    const output = await notification;
-    expect(agents).toEqual(["planner", fallbackName("planner")]);
-    expect(deliveries).toBe(2);
-    expect(new Set(deliveryMessageIDs).size).toBe(1);
-    expect(deliveryMessageIDs[0]).toMatch(/^msg_/);
-    expect(output).toContain("fallback plan");
-    expect(output).toContain("Planner finished");
-    expect(output).toContain('"usedFallback": true');
-  });
-
-  it("waits for the director session to become idle before delivering a result", async () => {
-    let checkedStatus!: () => void;
-    const statusChecked = new Promise<void>((resolve) => {
-      checkedStatus = resolve;
-    });
-    let parentIdle = false;
-    let deliveries = 0;
-    let delivered!: () => void;
-    const notification = new Promise<void>((resolve) => {
-      delivered = resolve;
-    });
-    const plugin = await load({
-      directory: await project(),
-      client: {
-        session: {
-          create: async () => ({ data: { id: "child" } }),
-          prompt: async () => ({ data: { info: {}, parts: [{ type: "text", text: "planner plan" }] } }),
-          status: async () => {
-            checkedStatus();
-            return { data: { parent: { type: parentIdle ? "idle" : "busy" } } };
-          },
-          promptAsync: async () => {
-            deliveries += 1;
-            delivered();
-            return {};
-          },
-        },
-      },
-    } as never);
-
-    await plugin.tool!.delegate!.execute(
-      { role: "planner", description: "Plan", prompt: "Plan" },
-      toolContext("director", "parent"),
-    );
-    await statusChecked;
-    expect(deliveries).toBe(0);
-
-    parentIdle = true;
-    await notification;
-    expect(deliveries).toBe(1);
-  });
-
-  it("does not start delegation from an already cancelled turn", async () => {
-    const plugin = await load({ directory: await project(), client: {} } as never);
-    const controller = new AbortController();
-    controller.abort(new Error("turn cancelled"));
-    const result = await plugin.tool!.delegate!.execute(
-      { role: "planner", description: "Plan", prompt: "Plan" },
-      toolContext("director", "parent", controller.signal),
-    );
-    expect(outputOf(result)).toBe("turn cancelled");
-    expect(titleOf(result)).toBe("Error");
-  });
-
-  it("keeps background delegation alive after the director turn abort signal fires", async () => {
-    let delivered!: (text: string) => void;
-    const notification = new Promise<string>((resolve) => {
-      delivered = resolve;
-    });
-    const plugin = await load({
-      directory: await project(),
-      client: {
-        session: {
-          create: async () => ({ data: { id: "child" } }),
-          prompt: async () => ({ data: { info: {}, parts: [{ type: "text", text: "planner plan" }] } }),
-          promptAsync: async (input: { body: { parts: Array<{ text: string }> } }) => {
-            delivered(input.body.parts[0]!.text);
-            return {};
-          },
-        },
-      },
-    } as never);
-    const controller = new AbortController();
-    const result = await plugin.tool!.delegate!.execute(
-      { role: "planner", description: "Plan", prompt: "Plan" },
-      toolContext("director", "parent", controller.signal),
-    );
-    expect(outputOf(result)).toContain("Delegating to planner in the background");
-    controller.abort(new Error("turn ended"));
-    const output = await notification;
-    expect(output).toContain("planner plan");
-    expect(output).toContain("state: completed");
-  });
-
-  it("stops pending result delivery when the plugin is disposed", async () => {
-    let attempted!: () => void;
-    const deliveryAttempted = new Promise<void>((resolve) => {
-      attempted = resolve;
-    });
-    const plugin = await load({
-      directory: await project(),
-      client: {
-        session: {
-          create: async () => ({ data: { id: "child" } }),
-          prompt: async () => ({ data: { info: {}, parts: [{ type: "text", text: "result" }] } }),
-          promptAsync: async () => {
-            attempted();
-            return { error: new Error("parent busy") };
-          },
-        },
-      },
-    } as never);
-    await plugin.tool!.delegate!.execute(
-      { role: "planner", description: "Plan", prompt: "Plan" },
-      toolContext("director", "parent"),
-    );
-    await deliveryAttempted;
-    await plugin.dispose?.();
   });
 
   it("shares TASKS.md across sessions and archives a completed plan", async () => {
     const root = await project();
     const plugin = await load({ directory: root } as never);
-    const tasks = plugin.tool!.tasks!;
+    const plan = plugin.tool!.plan!;
     const director = (sessionID: string) => toolContext("director", sessionID);
 
-    const created = outputOf(await tasks.execute(
-      { action: "create", title: "Shared tasklist", tasks: ["Implement feature"] },
+    const created = await plan.execute(
+      { action: "create", title: "Dashboard", tasks: ["Define model", "Build UI", "Review"] },
       director("session-a"),
-    ));
-    expect(created).toContain("Plan: Shared tasklist");
-    expect(created).toContain("Revision: 1");
-    expect(created).toContain("Approved: no");
-    expect(created).toContain("T001 Implement feature");
+    );
+    expect(outputOf(created)).toContain("Plan: Dashboard");
+    expect(revisionOf(outputOf(created))).toBe(1);
 
-    const fromAnotherSession = outputOf(await tasks.execute({ action: "get" }, director("session-b")));
-    expect(fromAnotherSession).toContain("Plan: Shared tasklist");
-
-    const approved = outputOf(await tasks.execute({ action: "approve", expectedRevision: 1 }, director("session-b")));
-    expect(approved).toContain("Approved: yes");
-    const approvedRevision = revisionOf(approved);
-
-    const completed = outputOf(await tasks.execute(
-      {
-        action: "update",
-        expectedRevision: approvedRevision,
-        taskID: "T001",
-        status: "completed",
-        evidence: "tests pass",
-      },
-      director("session-a"),
-    ));
-    expect(completed).toContain("[x] T001");
-    expect(completed).toContain("tests pass");
-    const completedRevision = revisionOf(completed);
-
-    const expanded = outputOf(await tasks.execute(
-      { action: "add", expectedRevision: completedRevision, tasks: ["Review final change"] },
+    const approved = await plan.execute(
+      { action: "approve", expectedRevision: 1 },
       director("session-b"),
-    ));
-    expect(expanded).toContain("T002 Review final change");
-    const expandedRevision = revisionOf(expanded);
+    );
+    expect(outputOf(approved)).toContain("Approved: yes");
+    expect(revisionOf(outputOf(approved))).toBe(2);
 
-    const reviewed = outputOf(await tasks.execute(
-      {
-        action: "update",
-        expectedRevision: expandedRevision,
-        taskID: "T002",
-        status: "completed",
-        evidence: "review clean",
-      },
-      director("session-a"),
-    ));
-    const reviewedRevision = revisionOf(reviewed);
+    for (const [taskID, status, evidence] of [
+      ["T001", "completed", "schema ready"],
+      ["T002", "completed", "ui shipped"],
+      ["T003", "completed", "review clean"],
+    ] as const) {
+      const updated = await plan.execute(
+        { action: "update", expectedRevision: revisionOf(outputOf(await plan.execute({ action: "get" }, director("s")))), taskID, status, evidence },
+        director("session-c"),
+      );
+      expect(outputOf(updated)).toContain(taskID);
+    }
 
-    const closed = outputOf(await tasks.execute(
-      { action: "close", expectedRevision: reviewedRevision },
-      director("session-b"),
-    ));
-    expect(closed).toContain("Status: closed");
-    expect(closed).toMatch(/Archived to .+\.md/);
-    const archivedPath = closed.match(/Archived to (.+\.md)/)?.[1];
-    expect(archivedPath).toBeTruthy();
-    expect(await readFile(archivedPath!, "utf8")).toContain("Review final change");
-    expect(outputOf(await tasks.execute({ action: "get" }, director("session-a")))).toBe("No active plan.");
+    const current = await plan.execute({ action: "get" }, director("session-d"));
+    const closed = await plan.execute(
+      { action: "close", expectedRevision: revisionOf(outputOf(current)) },
+      director("session-e"),
+    );
+    expect(outputOf(closed)).toMatch(/Archived to/);
+    expect(await readFile(join(root, ".code-ensemble", "TASKS.md"), "utf8").catch(() => "")).toBe("");
   });
 
   it("scopes the shared plan to the worktree instead of a nested directory", async () => {
@@ -344,7 +165,7 @@ describe("codeEnsemblePlugin", () => {
     const nested = join(root, "packages", "app");
     await mkdir(nested, { recursive: true });
     const plugin = await load({ directory: nested, worktree: root } as never);
-    await plugin.tool!.tasks!.execute(
+    await plugin.tool!.plan!.execute(
       { action: "create", title: "Worktree plan", tasks: ["Task"] },
       toolContext("director", "session"),
     );
@@ -353,16 +174,16 @@ describe("codeEnsemblePlugin", () => {
 
   it("rejects stale plan revisions", async () => {
     const plugin = await load({ directory: await project() } as never);
-    const tasks = plugin.tool!.tasks!;
-    await tasks.execute(
+    const plan = plugin.tool!.plan!;
+    await plan.execute(
       { action: "create", title: "Revision test", tasks: ["Task"] },
       toolContext("director", "one"),
     );
-    await tasks.execute(
+    await plan.execute(
       { action: "approve", expectedRevision: 1 },
       toolContext("director", "two"),
     );
-    const conflict = await tasks.execute(
+    const conflict = await plan.execute(
       { action: "update", expectedRevision: 1, taskID: "T001", status: "completed" },
       toolContext("director", "one"),
     );
@@ -372,33 +193,24 @@ describe("codeEnsemblePlugin", () => {
 
   it("allows only the director to use custom tools", async () => {
     const plugin = await load({ directory: await project() } as never);
-    const planResult = await plugin.tool!.tasks!.execute(
+    const planResult = await plugin.tool!.plan!.execute(
       { action: "get" },
       toolContext("reviewer", "session"),
     );
-    const delegateResult = await plugin.tool!.delegate!.execute(
-      { role: "planner", description: "Plan", prompt: "Plan" },
-      toolContext("reviewer", "session"),
-    );
     expect(outputOf(planResult)).toMatch(/Only the director/);
-    expect(outputOf(delegateResult)).toMatch(/Only the director/);
   });
 
   it("uses readable titles for plan actions", async () => {
     const plugin = await load({ directory: await project() } as never);
-    const created = await plugin.tool!.tasks!.execute(
+    const created = await plugin.tool!.plan!.execute(
       { action: "create", title: "Dashboard", tasks: ["Build UI"] },
       toolContext("director", "session"),
     );
     expect(titleOf(created)).toBe("Create plan · Dashboard");
-    const checked = await plugin.tool!.tasks!.execute(
+    const checked = await plugin.tool!.plan!.execute(
       { action: "get" },
       toolContext("director", "session"),
     );
     expect(titleOf(checked)).toBe("Check active plan");
   });
 });
-
-function fallbackName(role: "planner" | "architect"): string {
-  return `code-ensemble-${role}-fallback`;
-}

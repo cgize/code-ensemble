@@ -5,7 +5,6 @@ import { getPackageRoot, loadDefaultConfig } from "./defaults.js";
 import type {
   CodeEnsemblePluginOptions,
   CodeEnsembleProjectOverrides,
-  FallbackRole,
   ResolvedCodeEnsembleConfig,
   RoleName,
 } from "./types.js";
@@ -20,7 +19,6 @@ const ROLES: RoleName[] = [
   "reviewer",
 ];
 const ROLE_SET = new Set<string>(ROLES);
-const FALLBACK_SET = new Set<string>(["planner", "architect"]);
 
 class ConfigValidationError extends Error {
   constructor(path: string, got: unknown, want: string) {
@@ -69,9 +67,9 @@ function parseMap<T>(
 
 export function parseOverrides(raw: unknown): CodeEnsembleProjectOverrides {
   if (!isObject(raw)) fail("(root)", raw, "object");
-  const allowed = new Set(["models", "variants", "fallbacks"]);
+  const allowed = new Set(["models", "variants"]);
   for (const key of Object.keys(raw)) {
-    if (!allowed.has(key)) fail(key, raw[key], "models, variants, or fallbacks");
+    if (!allowed.has(key)) fail(key, raw[key], "models or variants");
   }
 
   const parseModel = (value: unknown, path: string) =>
@@ -79,15 +77,10 @@ export function parseOverrides(raw: unknown): CodeEnsembleProjectOverrides {
   const parseVariant = (value: unknown, path: string) => isString(value) ? value : fail(path, value, "string");
   const models = parseMap(raw.models, "models", ROLE_SET, parseModel);
   const variants = parseMap(raw.variants, "variants", ROLE_SET, parseVariant);
-  const fallbacks = parseMap(raw.fallbacks, "fallbacks", FALLBACK_SET, (value, path) => {
-    if (!Array.isArray(value)) fail(path, value, "model identifier[]");
-    return value.map((model, index) => parseModel(model, `${path}[${index}]`));
-  });
 
   return {
     ...(models ? { models } : {}),
     ...(variants ? { variants } : {}),
-    ...(fallbacks ? { fallbacks: fallbacks as Partial<Record<FallbackRole, string[]>> } : {}),
   };
 }
 
@@ -120,13 +113,7 @@ export function resolveCodeEnsembleConfig(
     ROLES.filter((role) => role !== "director").map((role) => `- ${role}: \`${role}\``).join("\n"),
   );
 
-  return {
-    roles,
-    fallbacks: {
-      planner: overrides.fallbacks?.planner ?? defaults.roles.planner.fallbacks ?? [],
-      architect: overrides.fallbacks?.architect ?? defaults.roles.architect.fallbacks ?? [],
-    },
-  };
+  return { roles };
 }
 
 export { ConfigValidationError };

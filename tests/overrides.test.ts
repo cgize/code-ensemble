@@ -12,15 +12,13 @@ afterEach(async () => {
 });
 
 describe("code-ensemble overrides", () => {
-  it("accepts only models, variants, and planner/architect fallbacks", () => {
+  it("accepts only models and variants", () => {
     expect(parseOverrides({
       models: { reviewer: "opencode-go/glm-5.2" },
       variants: { planner: "high" },
-      fallbacks: { architect: ["opencode-go/glm-5.2"] },
     })).toMatchObject({
       models: { reviewer: "opencode-go/glm-5.2" },
       variants: { planner: "high" },
-      fallbacks: { architect: ["opencode-go/glm-5.2"] },
     });
   });
 
@@ -28,12 +26,12 @@ describe("code-ensemble overrides", () => {
     expect(() => parseOverrides({ transitions: { autoLoop: true } })).toThrow(ConfigValidationError);
     expect(() => parseOverrides({ subagents: { disable: ["reviewer"] } })).toThrow(ConfigValidationError);
     expect(() => parseOverrides({ prompts: { director: "./director.md" } })).toThrow(ConfigValidationError);
+    expect(() => parseOverrides({ fallbacks: { planner: ["opencode-go/glm-5.2"] } })).toThrow(ConfigValidationError);
   });
 
   it("rejects unknown roles and malformed model identifiers", () => {
     expect(() => parseOverrides({ models: { tester: "opencode-go/model" } })).toThrow(/valid role/);
     expect(() => parseOverrides({ models: { planner: "gpt-5" } })).toThrow(/provider\/model/);
-    expect(() => parseOverrides({ fallbacks: { reviewer: ["opencode-go/model"] } })).toThrow(/valid role/);
   });
 
   it("auto-discovers code-ensemble.json", async () => {

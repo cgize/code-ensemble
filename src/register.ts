@@ -1,17 +1,14 @@
 import { tool, type Plugin } from "@opencode-ai/plugin";
 
-import { FallbackDelegator } from "./delegate.js";
-import { fallbackAgentName } from "./fallback.js";
 import { resolveCodeEnsembleConfig } from "./overrides.js";
 import { addPlanTasks, approvePlan, closePlan, createPlan, readActivePlan, updatePlanTask } from "./plans.js";
 import {
-  delegateToolTitle,
   formatClosedPlanOutput,
   formatPlanOutput,
   formatToolError,
   planToolTitle,
 } from "./present.js";
-import type { CodeEnsemblePluginOptions, FallbackRole, ResolvedCodeEnsembleConfig, RoleName } from "./types.js";
+import type { CodeEnsemblePluginOptions, ResolvedCodeEnsembleConfig, RoleName } from "./types.js";
 
 function stringField(value: unknown, key: string): string | undefined {
   if (!value || typeof value !== "object") return undefined;
@@ -62,8 +59,7 @@ const BASE_PERMISSION: AgentPermission = {
   lsp: "deny",
   doom_loop: "ask",
   skill: "deny",
-  tasks: "deny",
-  delegate: "deny",
+  plan: "deny",
 };
 
 const PROTECTED_READ: Record<string, PermissionAction> = {
@@ -123,13 +119,14 @@ const SUBAGENT_PERMISSIONS: Record<SubagentRole, AgentPermission> = {
 };
 
 const SUBAGENT_ROLES = Object.keys(SUBAGENT_PERMISSIONS) as SubagentRole[];
-const FALLBACK_ROLES: FallbackRole[] = ["planner", "architect"];
 
 function agentDefinitions(config: ResolvedCodeEnsembleConfig): Record<string, unknown> {
   const taskPermissions: Record<string, "allow" | "deny"> = {
     "*": "deny",
     explorer: "allow",
     visualizer: "allow",
+    planner: "allow",
+    architect: "allow",
     implementer: "allow",
     reviewer: "allow",
   };
@@ -156,25 +153,12 @@ function agentDefinitions(config: ResolvedCodeEnsembleConfig): Record<string, un
     };
   }
 
-  for (const role of FALLBACK_ROLES) {
-    config.fallbacks[role].forEach((model, index) => {
-      definitions[fallbackAgentName(role, index + 1)] = {
-        description: `Fallback model for ${role}.`,
-        mode: "subagent",
-        model,
-        prompt: config.roles[role].promptText,
-        permission: SUBAGENT_PERMISSIONS[role],
-        hidden: true,
-      };
-    });
-  }
   return definitions;
 }
 
 export const codeEnsemblePlugin: Plugin = async (input, options = {}) => {
   const directory = projectDirectory(input);
   const config = resolveCodeEnsembleConfig(directory, pluginOptions(options));
-  const delegator = input.client ? new FallbackDelegator(input.client) : undefined;
 
   return {
     config: async (runtimeConfig) => {
@@ -182,41 +166,7 @@ export const codeEnsemblePlugin: Plugin = async (input, options = {}) => {
       Object.assign(runtimeConfig.agent, agentDefinitions(config));
     },
     tool: {
-      delegate: tool({
-        description: "Delegate work to planner or architect in the background, with ordered model fallbacks.",
-        args: {
-          role: tool.schema.enum(["planner", "architect"]).describe("Specialist to run"),
-          description: tool.schema.string().describe("Short label shown in the UI"),
-          prompt: tool.schema.string().describe("Full instructions for the specialist"),
-        },
-        async execute(args, context) {
-          const title = delegateToolTitle(args.role, args.description);
-          context.metadata({ title });
-          const error = requireDirector(context);
-          if (error) return formatToolError(error);
-          if (!delegator) return formatToolError("OpenCode did not provide a plugin client");
-          try {
-            const result = delegator.start({
-              parentSessionID: context.sessionID,
-              description: args.description,
-              prompt: args.prompt,
-              role: args.role,
-              primaryAgent: args.role,
-              primaryModel: config.roles[args.role].model,
-              fallbackModels: config.fallbacks[args.role],
-              signal: context.abort,
-            });
-            return {
-              title,
-              metadata: { background: true, taskID: result.taskID, role: args.role },
-              output: result.output,
-            };
-          } catch (caught) {
-            return formatToolError(caught instanceof Error ? caught.message : String(caught));
-          }
-        },
-      }),
-      tasks: tool({
+      plan: tool({
         description: "Read or update the shared project plan in .code-ensemble/TASKS.md.",
         args: {
           action: tool.schema
@@ -275,9 +225,6 @@ export const codeEnsemblePlugin: Plugin = async (input, options = {}) => {
           }
         },
       }),
-    },
-    dispose: async () => {
-      await delegator?.dispose();
     },
   };
 };

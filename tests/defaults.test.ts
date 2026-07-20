@@ -26,24 +26,24 @@ describe("code-ensemble defaults", () => {
       "implementer",
       "reviewer",
     ]);
-    expect(defaults.roles.planner.fallbacks).toEqual(["opencode-go/glm-5.2"]);
-    expect(defaults.roles.architect.fallbacks).toEqual(["opencode-go/glm-5.2"]);
+    expect(defaults.roles.planner).not.toHaveProperty("fallbacks");
+    expect(defaults.roles.architect).not.toHaveProperty("fallbacks");
   });
 
-  it("merges model, variant, and fallback overrides", async () => {
+  it("merges model and variant overrides", async () => {
     const root = await mkdtemp(resolve(tmpdir(), "code-ensemble-defaults-"));
     tempDirs.push(root);
     await writeFile(resolve(root, "code-ensemble.json"), JSON.stringify({
       models: { planner: "openai/gpt-5.4-mini" },
       variants: { planner: "high" },
-      fallbacks: { planner: ["opencode-go/deepseek-v4-flash"] },
     }));
 
     const config = resolveCodeEnsembleConfig(root);
     expect(config.roles.planner.model).toBe("openai/gpt-5.4-mini");
     expect(config.roles.planner.variant).toBe("high");
-    expect(config.fallbacks.planner).toEqual(["opencode-go/deepseek-v4-flash"]);
     expect(config.roles.director.promptText).toContain("explorer: `explorer`");
+    expect(config.roles.director.promptText).toContain("native `task`");
+    expect(config).not.toHaveProperty("fallbacks");
   });
 
   it("exports only the root and server package entries", () => {
