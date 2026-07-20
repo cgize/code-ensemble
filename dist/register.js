@@ -3,6 +3,7 @@ import { FallbackDelegator } from "./delegate.js";
 import { fallbackAgentName } from "./fallback.js";
 import { resolveCodeEnsembleConfig } from "./overrides.js";
 import { addPlanTasks, approvePlan, closePlan, createPlan, readActivePlan, updatePlanTask } from "./plans.js";
+import { delegateToolTitle, formatClosedPlanOutput, formatPlanOutput, formatToolError, planToolTitle, } from "./present.js";
 function stringField(value, key) {
     if (!value || typeof value !== "object")
         return undefined;
@@ -44,7 +45,8 @@ const BASE_PERMISSION = {
     lsp: "deny",
     doom_loop: "ask",
     skill: "deny",
-    "code_ensemble_*": "deny",
+    tasks: "deny",
+    delegate: "deny",
 };
 const PROTECTED_READ = {
     "*": "allow",
@@ -153,19 +155,21 @@ export const codeEnsemblePlugin = async (input, options = {}) => {
             Object.assign(runtimeConfig.agent, agentDefinitions(config));
         },
         tool: {
-            code_ensemble_delegate: tool({
-                description: "Run planner or architect in the background with ordered model fallbacks.",
+            delegate: tool({
+                description: "Delegate work to planner or architect in the background, with ordered model fallbacks.",
                 args: {
-                    role: tool.schema.enum(["planner", "architect"]),
-                    description: tool.schema.string(),
-                    prompt: tool.schema.string(),
+                    role: tool.schema.enum(["planner", "architect"]).describe("Specialist to run"),
+                    description: tool.schema.string().describe("Short label shown in the UI"),
+                    prompt: tool.schema.string().describe("Full instructions for the specialist"),
                 },
                 async execute(args, context) {
+                    const title = delegateToolTitle(args.role, args.description);
+                    context.metadata({ title });
                     const error = requireDirector(context);
                     if (error)
-                        return JSON.stringify({ error });
+                        return formatToolError(error);
                     if (!delegator)
-                        return JSON.stringify({ error: "OpenCode did not provide a plugin client" });
+                        return formatToolError("OpenCode did not provide a plugin client");
                     try {
                         const result = delegator.start({
                             parentSessionID: context.sessionID,
@@ -178,57 +182,70 @@ export const codeEnsemblePlugin = async (input, options = {}) => {
                             signal: context.abort,
                         });
                         return {
-                            title: args.description,
-                            metadata: { background: true, taskID: result.taskID },
+                            title,
+                            metadata: { background: true, taskID: result.taskID, role: args.role },
                             output: result.output,
                         };
                     }
                     catch (caught) {
-                        return JSON.stringify({ error: caught instanceof Error ? caught.message : String(caught) });
+                        return formatToolError(caught instanceof Error ? caught.message : String(caught));
                     }
                 },
             }),
-            code_ensemble_plan: tool({
-                description: "Create, read, approve, update, or close the project-wide .code-ensemble/TASKS.md plan.",
+            tasks: tool({
+                description: "Read or update the shared project plan in .code-ensemble/TASKS.md.",
                 args: {
-                    action: tool.schema.enum(["create", "get", "approve", "add", "update", "close"]),
-                    title: tool.schema.string().optional(),
-                    tasks: tool.schema.array(tool.schema.string()).optional(),
-                    expectedRevision: tool.schema.number().int().positive().optional(),
-                    taskID: tool.schema.string().optional(),
-                    status: tool.schema.enum(["pending", "in_progress", "completed", "blocked"]).optional(),
-                    evidence: tool.schema.string().optional(),
+                    action: tool.schema
+                        .enum(["create", "get", "approve", "add", "update", "close"])
+                        .describe("Plan action to perform"),
+                    title: tool.schema.string().optional().describe("Plan title when creating"),
+                    tasks: tool.schema.array(tool.schema.string()).optional().describe("Task texts for create or add"),
+                    expectedRevision: tool.schema.number().int().positive().optional().describe("Current plan revision"),
+                    taskID: tool.schema.string().optional().describe("Task id for update, e.g. T001"),
+                    status: tool.schema
+                        .enum(["pending", "in_progress", "completed", "blocked"])
+                        .optional()
+                        .describe("New task status for update"),
+                    evidence: tool.schema.string().optional().describe("Verification evidence when completing a task"),
                 },
                 async execute(args, context) {
+                    const title = planToolTitle(args);
+                    context.metadata({ title });
                     const error = requireDirector(context);
                     if (error)
-                        return JSON.stringify({ error });
+                        return formatToolError(error);
+                    const ok = (output) => ({ title, output });
                     try {
-                        if (args.action === "get")
-                            return JSON.stringify(await readActivePlan(directory));
+                        if (args.action === "get") {
+                            const active = await readActivePlan(directory);
+                            return ok(formatPlanOutput(active?.plan ?? null));
+                        }
                         if (args.action === "create") {
                             if (!args.title || !args.tasks)
-                                return JSON.stringify({ error: "title and tasks are required for create" });
-                            return JSON.stringify(await createPlan(directory, args.title, args.tasks, context.abort));
+                                return formatToolError("title and tasks are required for create");
+                            return ok(formatPlanOutput(await createPlan(directory, args.title, args.tasks, context.abort)));
                         }
                         if (args.expectedRevision === undefined) {
-                            return JSON.stringify({ error: "expectedRevision is required for approve, add, update, and close" });
+                            return formatToolError("expectedRevision is required for approve, add, update, and close");
                         }
-                        if (args.action === "approve")
-                            return JSON.stringify(await approvePlan(directory, args.expectedRevision, context.abort));
-                        if (args.action === "close")
-                            return JSON.stringify(await closePlan(directory, args.expectedRevision, context.abort));
+                        if (args.action === "approve") {
+                            return ok(formatPlanOutput(await approvePlan(directory, args.expectedRevision, context.abort)));
+                        }
+                        if (args.action === "close") {
+                            const closed = await closePlan(directory, args.expectedRevision, context.abort);
+                            return ok(formatClosedPlanOutput(closed.plan, closed.archived));
+                        }
                         if (args.action === "add") {
                             if (!args.tasks)
-                                return JSON.stringify({ error: "tasks are required for add" });
-                            return JSON.stringify(await addPlanTasks(directory, args.expectedRevision, args.tasks, context.abort));
+                                return formatToolError("tasks are required for add");
+                            return ok(formatPlanOutput(await addPlanTasks(directory, args.expectedRevision, args.tasks, context.abort)));
                         }
                         if (!args.taskID || !args.status)
-                            return JSON.stringify({ error: "taskID and status are required for update" });
-                        return JSON.stringify(await updatePlanTask(directory, args.expectedRevision, args.taskID, args.status, args.evidence, context.abort));
+                            return formatToolError("taskID and status are required for update");
+                        return ok(formatPlanOutput(await updatePlanTask(directory, args.expectedRevision, args.taskID, args.status, args.evidence, context.abort)));
                     }
                     catch (caught) {
-                        return JSON.stringify({ error: caught instanceof Error ? caught.message : String(caught) });
+                        return formatToolError(caught instanceof Error ? caught.message : String(caught));
                     }
                 },
             }),

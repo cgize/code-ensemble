@@ -10,7 +10,6 @@ type StartInput = {
     fallbackModels: string[];
     signal?: AbortSignal;
 };
-export declare function formatRunningDelegation(taskID: string, description: string): string;
 export declare class FallbackDelegator {
     private readonly client;
     private readonly active;
@@ -23,6 +22,7 @@ export declare class FallbackDelegator {
     dispose(): Promise<void>;
     private run;
     private deliver;
+    private parentIsBusy;
 }
 export {};
 //# sourceMappingURL=delegate.d.ts.map

@@ -25,7 +25,7 @@ try {
      const hooks = await plugin.default.server({ directory: process.cwd(), worktree: process.cwd() }, {});
      const config = {};
      await hooks.config(config);
-     if (config.agent?.director?.mode !== "primary" || config.agent.director.hidden === true || !hooks.tool?.code_ensemble_plan) process.exit(1);`,
+      if (config.agent?.director?.mode !== "primary" || config.agent.director.hidden === true || !hooks.tool?.tasks) process.exit(1);`,
   ], { cwd: installRoot, stdio: "inherit" });
 } finally {
   rmSync(tarball, { force: true });

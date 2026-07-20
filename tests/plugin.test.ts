@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import codeEnsemblePlugin, { codeEnsemblePlugin as pluginModule } from "../src/index";
-import type { SharedPlan } from "../src/plans";
 
 const server = pluginModule.server;
 const tempDirs: string[] = [];
@@ -21,6 +20,36 @@ async function load(input: Parameters<typeof server>[0]) {
   const plugin = await server(input, {});
   plugins.push(plugin);
   return plugin;
+}
+
+function toolContext(agent: string, sessionID: string, abort?: AbortSignal) {
+  return {
+    agent,
+    sessionID,
+    abort,
+    metadata() {},
+  } as never;
+}
+
+function outputOf(result: unknown): string {
+  if (typeof result === "string") return result;
+  if (result && typeof result === "object" && "output" in result) {
+    return String((result as { output: unknown }).output);
+  }
+  throw new Error("Expected a tool result with output");
+}
+
+function titleOf(result: unknown): string | undefined {
+  if (result && typeof result === "object" && "title" in result) {
+    return String((result as { title: unknown }).title);
+  }
+  return undefined;
+}
+
+function revisionOf(text: string): number {
+  const match = text.match(/Revision:\s*(\d+)/);
+  if (!match) throw new Error(`Revision not found in:\n${text}`);
+  return Number(match[1]);
 }
 
 afterEach(async () => {
@@ -54,7 +83,7 @@ describe("codeEnsemblePlugin", () => {
     expect(config.agent?.researcher).toBeUndefined();
     expect(config.agent?.tester).toBeUndefined();
     expect(config.command).toBeUndefined();
-    expect(Object.keys(plugin.tool ?? {})).toEqual(["code_ensemble_delegate", "code_ensemble_plan"]);
+    expect(Object.keys(plugin.tool ?? {})).toEqual(["delegate", "tasks"]);
     expect(plugin.event).toBeUndefined();
     expect(plugin["experimental.chat.system.transform"]).toBeUndefined();
     expect(plugin["experimental.session.compacting"]).toBeUndefined();
@@ -73,7 +102,7 @@ describe("codeEnsemblePlugin", () => {
     expect(permission("implementer")).toMatchObject({ edit: { "*": "allow", "*.env": "ask" } });
     expect(permission("reviewer")).toMatchObject({ edit: "deny", bash: { "*": "ask" } });
     for (const role of ["explorer", "visualizer", "planner", "architect", "implementer", "reviewer"]) {
-      expect(permission(role)).toMatchObject({ task: "deny", "code_ensemble_*": "deny" });
+      expect(permission(role)).toMatchObject({ task: "deny", tasks: "deny", delegate: "deny" });
     }
   });
 
@@ -103,6 +132,7 @@ describe("codeEnsemblePlugin", () => {
             await fallbackGate;
             return { data: { info: {}, parts: [{ type: "text", text: "fallback plan" }] } };
           },
+          status: async () => ({ data: { parent: { type: "idle" } } }),
           promptAsync: async (input: { body: { messageID: string; parts: Array<{ text: string }> } }) => {
             deliveries += 1;
             deliveryMessageIDs.push(input.body.messageID);
@@ -114,31 +144,106 @@ describe("codeEnsemblePlugin", () => {
       },
     } as never);
 
-    const result = await plugin.tool!.code_ensemble_delegate!.execute(
+    const result = await plugin.tool!.delegate!.execute(
       { role: "planner", description: "Plan change", prompt: "Inspect repository" },
-      { agent: "director", sessionID: "parent" } as never,
+      toolContext("director", "parent"),
     );
-    expect(result).toMatchObject({ metadata: { background: true } });
-    expect((result as { output: string }).output).toContain('state="running"');
+    expect(result).toMatchObject({ metadata: { background: true }, title: "Delegate to planner · Plan change" });
+    expect(outputOf(result)).toContain("Delegating to planner in the background");
 
     releaseFallback();
     const output = await notification;
     expect(agents).toEqual(["planner", fallbackName("planner")]);
     expect(deliveries).toBe(2);
     expect(new Set(deliveryMessageIDs).size).toBe(1);
+    expect(deliveryMessageIDs[0]).toMatch(/^msg_/);
     expect(output).toContain("fallback plan");
+    expect(output).toContain("Planner finished");
     expect(output).toContain('"usedFallback": true');
+  });
+
+  it("waits for the director session to become idle before delivering a result", async () => {
+    let checkedStatus!: () => void;
+    const statusChecked = new Promise<void>((resolve) => {
+      checkedStatus = resolve;
+    });
+    let parentIdle = false;
+    let deliveries = 0;
+    let delivered!: () => void;
+    const notification = new Promise<void>((resolve) => {
+      delivered = resolve;
+    });
+    const plugin = await load({
+      directory: await project(),
+      client: {
+        session: {
+          create: async () => ({ data: { id: "child" } }),
+          prompt: async () => ({ data: { info: {}, parts: [{ type: "text", text: "planner plan" }] } }),
+          status: async () => {
+            checkedStatus();
+            return { data: { parent: { type: parentIdle ? "idle" : "busy" } } };
+          },
+          promptAsync: async () => {
+            deliveries += 1;
+            delivered();
+            return {};
+          },
+        },
+      },
+    } as never);
+
+    await plugin.tool!.delegate!.execute(
+      { role: "planner", description: "Plan", prompt: "Plan" },
+      toolContext("director", "parent"),
+    );
+    await statusChecked;
+    expect(deliveries).toBe(0);
+
+    parentIdle = true;
+    await notification;
+    expect(deliveries).toBe(1);
   });
 
   it("does not start delegation from an already cancelled turn", async () => {
     const plugin = await load({ directory: await project(), client: {} } as never);
     const controller = new AbortController();
     controller.abort(new Error("turn cancelled"));
-    const result = await plugin.tool!.code_ensemble_delegate!.execute(
+    const result = await plugin.tool!.delegate!.execute(
       { role: "planner", description: "Plan", prompt: "Plan" },
-      { agent: "director", sessionID: "parent", abort: controller.signal } as never,
+      toolContext("director", "parent", controller.signal),
     );
-    expect(parse(result).error).toBe("turn cancelled");
+    expect(outputOf(result)).toBe("turn cancelled");
+    expect(titleOf(result)).toBe("Error");
+  });
+
+  it("keeps background delegation alive after the director turn abort signal fires", async () => {
+    let delivered!: (text: string) => void;
+    const notification = new Promise<string>((resolve) => {
+      delivered = resolve;
+    });
+    const plugin = await load({
+      directory: await project(),
+      client: {
+        session: {
+          create: async () => ({ data: { id: "child" } }),
+          prompt: async () => ({ data: { info: {}, parts: [{ type: "text", text: "planner plan" }] } }),
+          promptAsync: async (input: { body: { parts: Array<{ text: string }> } }) => {
+            delivered(input.body.parts[0]!.text);
+            return {};
+          },
+        },
+      },
+    } as never);
+    const controller = new AbortController();
+    const result = await plugin.tool!.delegate!.execute(
+      { role: "planner", description: "Plan", prompt: "Plan" },
+      toolContext("director", "parent", controller.signal),
+    );
+    expect(outputOf(result)).toContain("Delegating to planner in the background");
+    controller.abort(new Error("turn ended"));
+    const output = await notification;
+    expect(output).toContain("planner plan");
+    expect(output).toContain("state: completed");
   });
 
   it("stops pending result delivery when the plugin is disposed", async () => {
@@ -159,9 +264,9 @@ describe("codeEnsemblePlugin", () => {
         },
       },
     } as never);
-    await plugin.tool!.code_ensemble_delegate!.execute(
+    await plugin.tool!.delegate!.execute(
       { role: "planner", description: "Plan", prompt: "Plan" },
-      { agent: "director", sessionID: "parent" } as never,
+      toolContext("director", "parent"),
     );
     await deliveryAttempted;
     await plugin.dispose?.();
@@ -170,44 +275,68 @@ describe("codeEnsemblePlugin", () => {
   it("shares TASKS.md across sessions and archives a completed plan", async () => {
     const root = await project();
     const plugin = await load({ directory: root } as never);
-    const plan = plugin.tool!.code_ensemble_plan!;
+    const tasks = plugin.tool!.tasks!;
+    const director = (sessionID: string) => toolContext("director", sessionID);
 
-    const created = parse(await plan.execute(
+    const created = outputOf(await tasks.execute(
       { action: "create", title: "Shared tasklist", tasks: ["Implement feature"] },
-      { agent: "director", sessionID: "session-a" } as never,
+      director("session-a"),
     ));
-    expect(created).toMatchObject({ revision: 1, approved: false, tasks: [{ id: "T001", status: "pending" }] });
+    expect(created).toContain("Plan: Shared tasklist");
+    expect(created).toContain("Revision: 1");
+    expect(created).toContain("Approved: no");
+    expect(created).toContain("T001 Implement feature");
 
-    const fromAnotherSession = parse(await plan.execute(
-      { action: "get" },
-      { agent: "director", sessionID: "session-b" } as never,
-    ));
-    expect(fromAnotherSession.plan.id).toBe(created.id);
+    const fromAnotherSession = outputOf(await tasks.execute({ action: "get" }, director("session-b")));
+    expect(fromAnotherSession).toContain("Plan: Shared tasklist");
 
-    const approved = parse(await plan.execute(
-      { action: "approve", expectedRevision: 1 },
-      { agent: "director", sessionID: "session-b" } as never,
-    ));
-    const completed = parse(await plan.execute(
-      { action: "update", expectedRevision: approved.revision, taskID: "T001", status: "completed", evidence: "tests pass" },
-      { agent: "director", sessionID: "session-a" } as never,
-    ));
-    const expanded = parse(await plan.execute(
-      { action: "add", expectedRevision: completed.revision, tasks: ["Review final change"] },
-      { agent: "director", sessionID: "session-b" } as never,
-    ));
-    const reviewed = parse(await plan.execute(
-      { action: "update", expectedRevision: expanded.revision, taskID: "T002", status: "completed", evidence: "review clean" },
-      { agent: "director", sessionID: "session-a" } as never,
-    ));
-    const closed = parse(await plan.execute(
-      { action: "close", expectedRevision: reviewed.revision },
-      { agent: "director", sessionID: "session-b" } as never,
-    ));
+    const approved = outputOf(await tasks.execute({ action: "approve", expectedRevision: 1 }, director("session-b")));
+    expect(approved).toContain("Approved: yes");
+    const approvedRevision = revisionOf(approved);
 
-    expect(closed.plan.status).toBe("closed");
-    expect(await readFile(closed.archived, "utf8")).toContain("Review final change");
-    expect(parse(await plan.execute({ action: "get" }, { agent: "director", sessionID: "session-a" } as never))).toBeNull();
+    const completed = outputOf(await tasks.execute(
+      {
+        action: "update",
+        expectedRevision: approvedRevision,
+        taskID: "T001",
+        status: "completed",
+        evidence: "tests pass",
+      },
+      director("session-a"),
+    ));
+    expect(completed).toContain("[x] T001");
+    expect(completed).toContain("tests pass");
+    const completedRevision = revisionOf(completed);
+
+    const expanded = outputOf(await tasks.execute(
+      { action: "add", expectedRevision: completedRevision, tasks: ["Review final change"] },
+      director("session-b"),
+    ));
+    expect(expanded).toContain("T002 Review final change");
+    const expandedRevision = revisionOf(expanded);
+
+    const reviewed = outputOf(await tasks.execute(
+      {
+        action: "update",
+        expectedRevision: expandedRevision,
+        taskID: "T002",
+        status: "completed",
+        evidence: "review clean",
+      },
+      director("session-a"),
+    ));
+    const reviewedRevision = revisionOf(reviewed);
+
+    const closed = outputOf(await tasks.execute(
+      { action: "close", expectedRevision: reviewedRevision },
+      director("session-b"),
+    ));
+    expect(closed).toContain("Status: closed");
+    expect(closed).toMatch(/Archived to .+\.md/);
+    const archivedPath = closed.match(/Archived to (.+\.md)/)?.[1];
+    expect(archivedPath).toBeTruthy();
+    expect(await readFile(archivedPath!, "utf8")).toContain("Review final change");
+    expect(outputOf(await tasks.execute({ action: "get" }, director("session-a")))).toBe("No active plan.");
   });
 
   it("scopes the shared plan to the worktree instead of a nested directory", async () => {
@@ -215,57 +344,61 @@ describe("codeEnsemblePlugin", () => {
     const nested = join(root, "packages", "app");
     await mkdir(nested, { recursive: true });
     const plugin = await load({ directory: nested, worktree: root } as never);
-    await plugin.tool!.code_ensemble_plan!.execute(
+    await plugin.tool!.tasks!.execute(
       { action: "create", title: "Worktree plan", tasks: ["Task"] },
-      { agent: "director", sessionID: "session" } as never,
+      toolContext("director", "session"),
     );
     expect(await readFile(join(root, ".code-ensemble", "TASKS.md"), "utf8")).toContain("Worktree plan");
   });
 
   it("rejects stale plan revisions", async () => {
     const plugin = await load({ directory: await project() } as never);
-    const plan = plugin.tool!.code_ensemble_plan!;
-    await plan.execute(
+    const tasks = plugin.tool!.tasks!;
+    await tasks.execute(
       { action: "create", title: "Revision test", tasks: ["Task"] },
-      { agent: "director", sessionID: "one" } as never,
+      toolContext("director", "one"),
     );
-    await plan.execute(
+    await tasks.execute(
       { action: "approve", expectedRevision: 1 },
-      { agent: "director", sessionID: "two" } as never,
+      toolContext("director", "two"),
     );
-    const conflict = parse(await plan.execute(
+    const conflict = await tasks.execute(
       { action: "update", expectedRevision: 1, taskID: "T001", status: "completed" },
-      { agent: "director", sessionID: "one" } as never,
-    ));
-    expect(conflict.error).toMatch(/revision conflict/);
+      toolContext("director", "one"),
+    );
+    expect(outputOf(conflict)).toMatch(/revision conflict/);
+    expect(titleOf(conflict)).toBe("Error");
   });
 
   it("allows only the director to use custom tools", async () => {
     const plugin = await load({ directory: await project() } as never);
-    const planResult = await plugin.tool!.code_ensemble_plan!.execute(
+    const planResult = await plugin.tool!.tasks!.execute(
       { action: "get" },
-      { agent: "reviewer", sessionID: "session" } as never,
+      toolContext("reviewer", "session"),
     );
-    const delegateResult = await plugin.tool!.code_ensemble_delegate!.execute(
+    const delegateResult = await plugin.tool!.delegate!.execute(
       { role: "planner", description: "Plan", prompt: "Plan" },
-      { agent: "reviewer", sessionID: "session" } as never,
+      toolContext("reviewer", "session"),
     );
-    expect(parse(planResult).error).toMatch(/Only the director/);
-    expect(parse(delegateResult).error).toMatch(/Only the director/);
+    expect(outputOf(planResult)).toMatch(/Only the director/);
+    expect(outputOf(delegateResult)).toMatch(/Only the director/);
+  });
+
+  it("uses readable titles for plan actions", async () => {
+    const plugin = await load({ directory: await project() } as never);
+    const created = await plugin.tool!.tasks!.execute(
+      { action: "create", title: "Dashboard", tasks: ["Build UI"] },
+      toolContext("director", "session"),
+    );
+    expect(titleOf(created)).toBe("Create plan · Dashboard");
+    const checked = await plugin.tool!.tasks!.execute(
+      { action: "get" },
+      toolContext("director", "session"),
+    );
+    expect(titleOf(checked)).toBe("Check active plan");
   });
 });
 
 function fallbackName(role: "planner" | "architect"): string {
   return `code-ensemble-${role}-fallback`;
-}
-
-interface ParsedToolResult extends SharedPlan {
-  plan: SharedPlan;
-  archived: string;
-  error: string;
-}
-
-function parse(result: unknown): ParsedToolResult {
-  if (typeof result !== "string") throw new Error("Expected a JSON string tool result");
-  return JSON.parse(result) as ParsedToolResult;
 }

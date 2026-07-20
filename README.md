@@ -30,7 +30,7 @@ Only implementer can edit application code. The director cannot edit or run shel
 
 ## Model Fallbacks
 
-Planner and architect use `code_ensemble_delegate`, which runs without blocking the OpenCode UI. If the primary model fails because of quota, rate limits, availability, subscription, or access restrictions, configured fallback models are tried in order. Unrelated errors are not retried.
+Planner and architect use `delegate`, which runs without blocking the OpenCode UI. If the primary model fails because of quota, rate limits, availability, subscription, or access restrictions, configured fallback models are tried in order. Unrelated errors are not retried.
 
 ## Shared Plan
 
@@ -51,7 +51,7 @@ Revision: **6**
 - [ ] **T003** Review responsive behavior
 ```
 
-The director is the only agent allowed to mutate this file through `code_ensemble_plan`. OpenCode todos may mirror current progress in the UI, but the Markdown file remains the durable source of truth.
+The director is the only agent allowed to mutate this file through `tasks`. OpenCode todos may mirror current progress in the UI, but the Markdown file remains the durable source of truth.
 
 ## Install
 
