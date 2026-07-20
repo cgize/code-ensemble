@@ -56,10 +56,10 @@ The director is the only agent allowed to mutate this file through `code_ensembl
 ## Install
 
 ```sh
-opencode plugin @cgize/code-ensemble@1.0.1
+opencode plugin @cgize/code-ensemble@1.0.2
 ```
 
-The same release can be installed directly from GitHub with `opencode plugin "github:cgize/code-ensemble#v1.0.1"`.
+The same release can be installed directly from GitHub with `opencode plugin "github:cgize/code-ensemble#v1.0.2"`.
 
 Restart OpenCode and select `director` from the agent selector.
 

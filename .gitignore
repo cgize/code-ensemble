@@ -1,5 +1,7 @@
 node_modules/
-dist/
+dist/*
+!dist/*.js
+!dist/*.d.ts
 *.tsbuildinfo
 .opencode/state/
 .env
