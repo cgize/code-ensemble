@@ -54,10 +54,10 @@ The director is the only agent allowed to mutate this file through `plan`. OpenC
 ## Install
 
 ```sh
-opencode plugin @cgize/code-ensemble@1.0.4
+opencode plugin @cgize/code-ensemble@1.0.5
 ```
 
-For a repository install, clone tag `v1.0.4`, run `npm ci --omit=dev`, then register the package root with `opencode plugin "file:///absolute/path/to/code-ensemble"`. See [INSTALL.md](INSTALL.md).
+For a repository install, clone tag `v1.0.5`, run `npm ci --omit=dev`, then register the package root with `opencode plugin "file:///absolute/path/to/code-ensemble"`.
 
 Restart OpenCode and select `director` from the agent selector.
 
