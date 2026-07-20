@@ -225,6 +225,28 @@ describe("quota fallback delegation", () => {
     })).rejects.toThrow(/user cancellation/);
   });
 
+  it("reports a resolved SDK error when child cancellation fails", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("user cancellation"));
+    const abortErrors: unknown[] = [];
+    const create = async () => ({ data: { id: "abort-response-session" } });
+    const prompt = async () => response("should not run");
+    const abort = async () => ({ error: new Error("abort rejected by server") });
+
+    await expect(delegateWithFallback({ session: { create, prompt, abort } }, {
+      parentSessionID: "parent",
+      description: "Create plan",
+      prompt: "Inspect the repository",
+      role: "planner",
+      primaryAgent: "planner",
+      primaryModel: "openai/primary",
+      signal: controller.signal,
+      onAbortError: ({ error }) => abortErrors.push(error),
+    })).rejects.toThrow(/user cancellation/);
+    expect(abortErrors).toHaveLength(1);
+    expect(abortErrors[0]).toMatchObject({ message: "abort rejected by server" });
+  });
+
   it("rejects an empty subagent response", async () => {
     const create = async () => ({ data: { id: "empty-session" } });
     const prompt = async () => response("   ");

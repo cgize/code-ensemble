@@ -1,7 +1,10 @@
 import { tool, type Plugin } from "@opencode-ai/plugin";
 
 import { buildCommandDefinitions } from "./commands.js";
-import { delegateWithFallback, fallbackAgentName, type FallbackRole } from "./fallback.js";
+import { CleanupRegistry } from "./cleanup.js";
+import { DelegationPersistence } from "./delegation-persistence.js";
+import { fallbackAgentName, type FallbackRole } from "./fallback.js";
+import { DelegationCoordinator, formatDelegationGroup, formatDelegationTask } from "./delegations.js";
 import { resolveCodeEnsembleConfig } from "./overrides.js";
 import { listSessionArtifacts, readArtifact, saveArtifact } from "./artifacts.js";
 import { RootSessionResolver } from "./sessions.js";
@@ -297,6 +300,13 @@ export const codeEnsemblePlugin: Plugin = async (input, options = {}) => {
     reviewToPlanOnlyWithFindings: config.transitions.reviewToPlanOnlyWithFindings,
   };
   const getAgentName = (role: EnsembleSubagent) => config.renamedSubagents[role] ?? role;
+  const delegations = input.client
+    ? new DelegationCoordinator(input.client, new DelegationPersistence(projectDirectory))
+    : undefined;
+  const cleanup = new CleanupRegistry();
+  if (delegations) {
+    cleanup.register("delegations", () => delegations.dispose(), 10, 45_000);
+  }
 
   return {
     config: async (cfg) => {
@@ -408,7 +418,7 @@ export const codeEnsemblePlugin: Plugin = async (input, options = {}) => {
       }),
       code_ensemble_delegate: tool({
         description:
-          "Delegate a planner or architect task with ordered model fallbacks. Use this instead of task for planner and architect.",
+          "Start a planner or architect task in the background with ordered model fallbacks. The result is delivered automatically.",
         args: {
           role: tool.schema.enum(["planner", "architect"]),
           description: tool.schema.string(),
@@ -420,32 +430,127 @@ export const codeEnsemblePlugin: Plugin = async (input, options = {}) => {
           if (config.disabledSubagents.includes(args.role)) {
             return JSON.stringify({ error: `${args.role} is disabled in code-ensemble.json` });
           }
+          if (!delegations) return JSON.stringify({ error: "OpenCode did not provide a plugin client" });
           try {
-            const result = await delegateWithFallback(input.client, {
+            const result = await delegations.start({
               parentSessionID: ctx.sessionID,
               description: args.description,
               prompt: args.prompt,
               role: args.role,
               primaryAgent: getAgentName(args.role),
               primaryModel: config.roles[args.role].model,
-              fallbackModel: config.fallbacks[args.role][0],
               fallbackModels: config.fallbacks[args.role],
               signal: ctx.abort,
             });
             return {
               title: args.description,
-              metadata: { model: result.model, usedFallback: result.usedFallback, sessionID: result.sessionID },
-              output: [
-                `<task id="${result.sessionID}" state="completed">`,
-                "<task_result>",
-                result.output,
-                "</task_result>",
-                "</task>",
-              ].join("\n"),
+              metadata: { background: true, taskID: result.taskID },
+              output: formatDelegationTask(result),
             };
           } catch (error) {
             return JSON.stringify({ error: error instanceof Error ? error.message : String(error) });
           }
+        },
+      }),
+      code_ensemble_delegate_group: tool({
+        description:
+          "Start 2 to 8 independent planner or architect tasks as one background group. The director is notified once after every task finishes.",
+        args: {
+          description: tool.schema.string(),
+          tasks: tool.schema.array(tool.schema.object({
+            role: tool.schema.enum(["planner", "architect"]),
+            description: tool.schema.string(),
+            prompt: tool.schema.string(),
+          })).min(2).max(8),
+        },
+        async execute(args, ctx) {
+          const authorizationError = requireDirector(ctx);
+          if (authorizationError) return JSON.stringify({ error: authorizationError });
+          if (!delegations) return JSON.stringify({ error: "OpenCode did not provide a plugin client" });
+          const disabledRole = args.tasks.find((task) => config.disabledSubagents.includes(task.role));
+          if (disabledRole) return JSON.stringify({ error: `${disabledRole.role} is disabled in code-ensemble.json` });
+
+          try {
+            const result = await delegations.startGroup({
+              parentSessionID: ctx.sessionID,
+              description: args.description,
+              tasks: args.tasks.map((task) => ({
+                ...task,
+                primaryAgent: getAgentName(task.role),
+                primaryModel: config.roles[task.role].model,
+                fallbackModels: config.fallbacks[task.role],
+                signal: ctx.abort,
+              })),
+            });
+            return {
+              title: args.description,
+              metadata: {
+                background: true,
+                groupID: result.group.groupID,
+                taskIDs: result.group.taskIDs,
+              },
+              output: formatDelegationGroup(result.group, result.tasks),
+            };
+          } catch (error) {
+            return JSON.stringify({ error: error instanceof Error ? error.message : String(error) });
+          }
+        },
+      }),
+      code_ensemble_task_result: tool({
+        description: "Read the current status or retained result of a code-ensemble delegation.",
+        args: {
+          taskID: tool.schema.string(),
+        },
+        async execute(args, ctx) {
+          const authorizationError = requireDirector(ctx);
+          if (authorizationError) return JSON.stringify({ error: authorizationError });
+          const result = await delegations?.get(args.taskID, ctx.sessionID);
+          if (!result) return JSON.stringify({ error: `Delegation ${args.taskID} was not found` });
+          return {
+            title: result.description,
+            metadata: {
+              taskID: result.taskID,
+              status: result.status,
+              model: result.model,
+              usedFallback: result.usedFallback,
+              sessionID: result.childSessionID,
+            },
+            output: formatDelegationTask(result),
+          };
+        },
+      }),
+      code_ensemble_group_result: tool({
+        description: "Read a retained delegation group and its task IDs after automatic delivery is interrupted.",
+        args: {
+          groupID: tool.schema.string(),
+        },
+        async execute(args, ctx) {
+          const authorizationError = requireDirector(ctx);
+          if (authorizationError) return JSON.stringify({ error: authorizationError });
+          const result = await delegations?.getGroup(args.groupID, ctx.sessionID);
+          if (!result) return JSON.stringify({ error: `Delegation group ${args.groupID} was not found` });
+          return {
+            title: result.group.description,
+            metadata: {
+              groupID: result.group.groupID,
+              status: result.group.status,
+              taskIDs: result.group.taskIDs,
+            },
+            output: formatDelegationGroup(result.group, result.tasks),
+          };
+        },
+      }),
+      code_ensemble_cancel_delegate: tool({
+        description: "Cancel a running code-ensemble delegation.",
+        args: {
+          taskID: tool.schema.string(),
+        },
+        async execute(args, ctx) {
+          const authorizationError = requireDirector(ctx);
+          if (authorizationError) return JSON.stringify({ error: authorizationError });
+          const result = await delegations?.cancel(args.taskID, ctx.sessionID);
+          if (!result) return JSON.stringify({ error: `Delegation ${args.taskID} was not found` });
+          return JSON.stringify(result);
         },
       }),
       code_ensemble_save_artifact: tool({
@@ -508,11 +613,20 @@ export const codeEnsemblePlugin: Plugin = async (input, options = {}) => {
         },
       }),
     },
+    dispose: async () => {
+      await cleanup.dispose();
+    },
     event: async ({ event }) => {
       if (event.type === "session.created" || event.type === "session.updated") {
         sessions?.remember(event.properties.info.id, event.properties.info.parentID);
       } else if (event.type === "session.deleted") {
         sessions?.forget(event.properties.info.id);
+        await delegations?.onSessionDeleted(event.properties.info.id);
+      } else if (
+        event.type === "session.idle" ||
+        (event.type === "session.status" && event.properties.status.type === "idle")
+      ) {
+        await delegations?.onParentIdle(event.properties.sessionID);
       }
     },
     "experimental.chat.system.transform": async (hookInput, output) => {

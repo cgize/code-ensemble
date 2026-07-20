@@ -18,13 +18,14 @@ type FallbackClient = {
         parts: Array<{ type: string; text?: string }>;
       }>
     >;
-    abort?(input: { path: { id: string } }): Promise<FallbackClientResponse<boolean>>;
+    abort?(input: { path: { id: string }; signal?: AbortSignal }): Promise<FallbackClientResponse<boolean>>;
   };
 };
 
 type DelegationAttempt = {
   agent: string;
   model: string;
+  usedFallback: boolean;
 };
 
 export type DelegationResult = {
@@ -75,6 +76,8 @@ async function runAttempt(
   prompt: string,
   attempt: DelegationAttempt,
   signal?: AbortSignal,
+  onSessionCreated?: (input: { sessionID: string; agent: string; model: string; usedFallback: boolean }) => void | Promise<void>,
+  onAbortError?: (input: { sessionID: string; error: unknown }) => void,
 ): Promise<Omit<DelegationResult, "model" | "usedFallback">> {
   const created = await client.session.create({
     body: { parentID: parentSessionID, title: `${description} (@${attempt.agent})` },
@@ -83,11 +86,18 @@ async function runAttempt(
   if (!created.data) throw created.error ?? new Error("OpenCode did not create the subagent session");
 
   const childSessionID = created.data.id;
+  await onSessionCreated?.({ sessionID: childSessionID, ...attempt });
   let aborting: Promise<unknown> | undefined;
   const abortChild = () => {
     if (!client.session.abort) return Promise.resolve();
-    aborting ??= client.session.abort({ path: { id: childSessionID } });
-    void aborting.catch(() => undefined);
+    aborting ??= client.session.abort({
+      path: { id: childSessionID },
+      signal: AbortSignal.timeout(5_000),
+    }).then((response) => {
+      if (response.error) throw response.error;
+      if (response.data !== true) throw new Error(`OpenCode did not abort session ${childSessionID}`);
+    });
+    void aborting.catch((error) => onAbortError?.({ sessionID: childSessionID, error }));
     return aborting;
   };
   const onAbort = () => void abortChild();
@@ -135,11 +145,22 @@ export async function delegateWithFallback(
     fallbackModel?: string;
     fallbackModels?: string[];
     signal?: AbortSignal;
+    onSessionCreated?: (input: { sessionID: string; agent: string; model: string; usedFallback: boolean }) => void | Promise<void>;
+    onAbortError?: (input: { sessionID: string; error: unknown }) => void;
   },
 ): Promise<DelegationResult> {
-  const primary = { agent: input.primaryAgent, model: input.primaryModel };
+  const primary = { agent: input.primaryAgent, model: input.primaryModel, usedFallback: false };
   try {
-    const result = await runAttempt(client, input.parentSessionID, input.description, input.prompt, primary, input.signal);
+    const result = await runAttempt(
+      client,
+      input.parentSessionID,
+      input.description,
+      input.prompt,
+      primary,
+      input.signal,
+      input.onSessionCreated,
+      input.onAbortError,
+    );
     return { ...result, model: primary.model, usedFallback: false };
   } catch (error) {
     const fallbackModels = input.fallbackModels ?? (input.fallbackModel ? [input.fallbackModel] : []);
@@ -148,9 +169,18 @@ export async function delegateWithFallback(
     let lastError: unknown = error;
     for (const [index, model] of fallbackModels.entries()) {
       if (input.signal?.aborted) throw input.signal.reason ?? new Error("Delegation aborted");
-      const fallback = { agent: fallbackAgentName(input.role, index + 1), model };
+      const fallback = { agent: fallbackAgentName(input.role, index + 1), model, usedFallback: true };
       try {
-        const result = await runAttempt(client, input.parentSessionID, input.description, input.prompt, fallback, input.signal);
+        const result = await runAttempt(
+          client,
+          input.parentSessionID,
+          input.description,
+          input.prompt,
+          fallback,
+          input.signal,
+          input.onSessionCreated,
+          input.onAbortError,
+        );
         return { ...result, model: fallback.model, usedFallback: true };
       } catch (fallbackError) {
         lastError = fallbackError;

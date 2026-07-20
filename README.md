@@ -78,6 +78,10 @@ If OpenCode reports that a model request is out of quota, rate-limited, unavaila
 
 It does not retry unrelated failures such as invalid credentials, cancelled requests, tool errors, timeouts, or server errors.
 
+Planner and architect delegations run in the background so they do not block the OpenCode UI. The director receives the result automatically; retained results can also be recovered by task ID if delivery is interrupted.
+
+Independent planner and architect work can be launched as one delegation group. Every task runs separately, but the director is reactivated only once after the whole group finishes. Delegation metadata and bounded results are persisted per root conversation under `.opencode/state/code-ensemble-delegations/`, so completed results remain available after restarting OpenCode. Deleting the conversation removes its retained delegation state.
+
 ## Install
 
 Install the plugin through OpenCode:

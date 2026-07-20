@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { listSessionArtifacts, MAX_ARTIFACTS, readArtifact, saveArtifact } from "../src/artifacts";
 import { readCodeEnsembleState, resetCodeEnsembleState } from "../src/state";
+import { DelegationPersistence } from "../src/delegation-persistence";
 
 const tempDirs: string[] = [];
 
@@ -124,6 +125,21 @@ describe("artifact boundaries", () => {
 });
 
 describe("state boundaries", () => {
+  it("does not follow a symlinked delegation state directory", async () => {
+    const root = await mkdtemp(join(tmpdir(), "code-ensemble-delegation-link-"));
+    const outside = await mkdtemp(join(tmpdir(), "code-ensemble-delegation-outside-"));
+    tempDirs.push(root, outside);
+    await mkdir(join(root, ".opencode", "state"), { recursive: true });
+    try {
+      await symlink(outside, join(root, ".opencode", "state", "code-ensemble-delegations"), "junction");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM" || (error as NodeJS.ErrnoException).code === "EACCES") return;
+      throw error;
+    }
+
+    await expect(new DelegationPersistence(root).load("session")).rejects.toThrow(/safe directory/);
+  });
+
   it("does not follow a symlinked state directory", async () => {
     const root = await mkdtemp(join(tmpdir(), "code-ensemble-state-link-"));
     const outside = await mkdtemp(join(tmpdir(), "code-ensemble-state-outside-"));
