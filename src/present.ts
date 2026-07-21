@@ -18,8 +18,8 @@ export function planToolTitle(args: {
       return "Check active plan";
     case "create":
       return args.title ? `Create plan · ${args.title}` : "Create plan";
-    case "approve":
-      return "Approve plan";
+    case "replace":
+      return args.title ? `Replace plan · ${args.title}` : "Replace plan";
     case "close":
       return "Archive plan";
     case "add":
@@ -45,7 +45,8 @@ export function formatPlanOutput(plan: SharedPlan | null): string {
   });
   return [
     `Plan: ${plan.title}`,
-    `Status: ${plan.status} · Approved: ${plan.approved ? "yes" : "no"} · Revision: ${plan.revision}`,
+    `Plan ID: ${plan.id}`,
+    `Status: ${plan.status} · Revision: ${plan.revision}`,
     "",
     "Tasks:",
     ...tasks,

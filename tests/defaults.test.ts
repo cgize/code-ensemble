@@ -50,4 +50,23 @@ describe("code-ensemble defaults", () => {
     const packageJson = JSON.parse(readFileSync(resolve(process.cwd(), "package.json"), "utf8"));
     expect(Object.keys(packageJson.exports)).toEqual([".", "./server"]);
   });
+
+  it("director prompt continues without waiting for approval", () => {
+    const config = resolveCodeEnsembleConfig(tmpdir());
+    expect(config.roles.director.promptText).toContain("continue immediately without asking for approval");
+    expect(config.roles.director.promptText).toContain("never ask the user to approve the plan");
+  });
+
+  it("planner prompt persists the plan via create", () => {
+    const config = resolveCodeEnsembleConfig(tmpdir());
+    expect(config.roles.planner.promptText).toMatch(/action `create`/);
+    expect(config.roles.planner.promptText).toMatch(/may not use `replace`/);
+  });
+
+  it("architect prompt emits READY/REVISED via replace", () => {
+    const config = resolveCodeEnsembleConfig(tmpdir());
+    expect(config.roles.architect.promptText).toContain("READY");
+    expect(config.roles.architect.promptText).toContain("REVISED");
+    expect(config.roles.architect.promptText).toMatch(/action `replace`/);
+  });
 });

@@ -21,11 +21,10 @@ export type PlanTask = {
 };
 
 export type SharedPlan = {
-  version: 1;
+  version: 2;
   id: string;
   revision: number;
   status: "active" | "closed";
-  approved: boolean;
   title: string;
   createdAt: string;
   updatedAt: string;
@@ -56,7 +55,6 @@ export function renderPlan(plan: SharedPlan): string {
     `# Plan: ${plan.title}`,
     "",
     `Status: **${plan.status}**  `,
-    `Approved: **${plan.approved ? "yes" : "no"}**  `,
     `Revision: **${plan.revision}**`,
     "",
     "## Tasks",
@@ -72,14 +70,13 @@ function parsePlan(markdown: string): SharedPlan {
   if (end < 0) throw new Error("TASKS.md has incomplete plan metadata");
   const value = JSON.parse(markdown.slice(METADATA_START.length, end)) as Partial<SharedPlan>;
   if (
-    value.version !== 1 ||
+    value.version !== 2 ||
     typeof value.id !== "string" ||
     !PLAN_ID_PATTERN.test(value.id) ||
     typeof value.revision !== "number" ||
     !Number.isInteger(value.revision) ||
     value.revision < 1 ||
     (value.status !== "active" && value.status !== "closed") ||
-    typeof value.approved !== "boolean" ||
     typeof value.title !== "string" ||
     typeof value.createdAt !== "string" ||
     typeof value.updatedAt !== "string" ||
@@ -162,7 +159,13 @@ async function readUnlocked(filePath: string): Promise<SharedPlan | null> {
   }
 }
 
-function requireRevision(plan: SharedPlan, expectedRevision: number): void {
+function requirePlanCas(plan: SharedPlan, expectedPlanID: string, expectedRevision: number): void {
+  if (typeof expectedPlanID !== "string" || !PLAN_ID_PATTERN.test(expectedPlanID)) {
+    throw new Error("Invalid expected plan id");
+  }
+  if (plan.id !== expectedPlanID) {
+    throw new Error(`TASKS.md plan id conflict: expected ${expectedPlanID}, current ${plan.id}`);
+  }
   if (!Number.isInteger(expectedRevision) || expectedRevision !== plan.revision) {
     throw new Error(`TASKS.md revision conflict: expected ${expectedRevision}, current ${plan.revision}`);
   }
@@ -177,7 +180,6 @@ function isMatchingClosedArchive(active: SharedPlan, archived: SharedPlan): bool
     archived.id === active.id &&
     archived.status === "closed" &&
     archived.revision === active.revision + 1 &&
-    archived.approved === active.approved &&
     archived.title === active.title &&
     archived.createdAt === active.createdAt &&
     JSON.stringify(archived.tasks) === JSON.stringify(active.tasks)
@@ -197,11 +199,10 @@ export async function createPlan(worktree: string, title: string, tasks: string[
     if (await readUnlocked(file.path)) throw new Error("An active TASKS.md already exists; close it before creating another plan");
     const now = new Date().toISOString();
     const plan: SharedPlan = {
-      version: 1,
+      version: 2,
       id: randomUUID(),
       revision: 1,
       status: "active",
-      approved: false,
       title: line(title, "Plan title"),
       createdAt: now,
       updatedAt: now,
@@ -218,6 +219,7 @@ export async function createPlan(worktree: string, title: string, tasks: string[
 
 export async function updatePlanTask(
   worktree: string,
+  expectedPlanID: string,
   expectedRevision: number,
   taskID: string,
   status: PlanTaskStatus,
@@ -229,8 +231,7 @@ export async function updatePlanTask(
     const plan = await readUnlocked(file.path);
     if (!plan) throw new Error("No active TASKS.md exists");
     requireActive(plan);
-    requireRevision(plan, expectedRevision);
-    if (!plan.approved) throw new Error("TASKS.md must be approved before updating tasks");
+    requirePlanCas(plan, expectedPlanID, expectedRevision);
     const task = plan.tasks.find((candidate) => candidate.id === taskID);
     if (!task) throw new Error(`Task ${taskID} was not found in TASKS.md`);
     task.status = status;
@@ -244,6 +245,7 @@ export async function updatePlanTask(
 
 export async function addPlanTasks(
   worktree: string,
+  expectedPlanID: string,
   expectedRevision: number,
   tasks: string[],
   signal?: AbortSignal,
@@ -254,8 +256,7 @@ export async function addPlanTasks(
     const plan = await readUnlocked(file.path);
     if (!plan) throw new Error("No active TASKS.md exists");
     requireActive(plan);
-    requireRevision(plan, expectedRevision);
-    if (!plan.approved) throw new Error("TASKS.md must be approved before adding tasks");
+    requirePlanCas(plan, expectedPlanID, expectedRevision);
     if (plan.tasks.length + tasks.length > MAX_TASKS) throw new Error("TASKS.md cannot contain more than 100 tasks");
     const start = plan.tasks.length + 1;
     plan.tasks.push(...tasks.map((text, index) => ({
@@ -270,14 +271,30 @@ export async function addPlanTasks(
   }, signal);
 }
 
-export async function approvePlan(worktree: string, expectedRevision: number, signal?: AbortSignal): Promise<SharedPlan> {
+export async function replacePlan(
+  worktree: string,
+  expectedPlanID: string,
+  expectedRevision: number,
+  title: string,
+  tasks: string[],
+  signal?: AbortSignal,
+): Promise<SharedPlan> {
+  if (tasks.length === 0 || tasks.length > MAX_TASKS) throw new Error("A plan requires between 1 and 100 tasks");
   const file = await activePlanFile(worktree);
   return withFileLock(file.path, async () => {
     const plan = await readUnlocked(file.path);
     if (!plan) throw new Error("No active TASKS.md exists");
     requireActive(plan);
-    requireRevision(plan, expectedRevision);
-    plan.approved = true;
+    requirePlanCas(plan, expectedPlanID, expectedRevision);
+    if (plan.tasks.some((task) => task.status !== "pending" || task.evidence !== undefined)) {
+      throw new Error("TASKS.md can only be replaced when every task is pending and has no evidence");
+    }
+    plan.title = line(title, "Plan title");
+    plan.tasks = tasks.map((text, index) => ({
+      id: `T${String(index + 1).padStart(3, "0")}`,
+      text: line(text, `Task ${index + 1}`),
+      status: "pending" as const,
+    }));
     plan.revision += 1;
     plan.updatedAt = new Date().toISOString();
     await writePlan(file.root, file.path, plan, signal);
@@ -287,6 +304,7 @@ export async function approvePlan(worktree: string, expectedRevision: number, si
 
 export async function closePlan(
   worktree: string,
+  expectedPlanID: string,
   expectedRevision: number,
   signal?: AbortSignal,
 ): Promise<{ plan: SharedPlan; archived: string }> {
@@ -295,8 +313,7 @@ export async function closePlan(
     const plan = await readUnlocked(file.path);
     if (!plan) throw new Error("No active TASKS.md exists");
     requireActive(plan);
-    requireRevision(plan, expectedRevision);
-    if (!plan.approved) throw new Error("TASKS.md must be approved before closing it");
+    requirePlanCas(plan, expectedPlanID, expectedRevision);
     if (plan.tasks.some((task) => task.status !== "completed")) {
       throw new Error("Every task must be completed before closing TASKS.md");
     }

@@ -52,6 +52,18 @@ function revisionOf(text: string): number {
   return Number(match[1]);
 }
 
+function planIDOf(text: string): string {
+  const match = text.match(/Plan ID:\s*([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/i);
+  if (!match) throw new Error(`Plan ID not found in:\n${text}`);
+  return match[1]!;
+}
+
+function assertPlanOutput(text: string, planID?: string): void {
+  expect(text).toContain("Plan ID:");
+  expect(text).not.toMatch(/Approved/i);
+  if (planID) expect(text).toContain(`Plan ID: ${planID}`);
+}
+
 afterEach(async () => {
   await Promise.all(plugins.splice(0).map((plugin) => plugin.dispose?.()));
   await Promise.all(tempDirs.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
@@ -90,7 +102,7 @@ describe("codeEnsemblePlugin", () => {
     expect(plugin["experimental.session.compacting"]).toBeUndefined();
   });
 
-  it("keeps least-privilege role boundaries", async () => {
+  it("declares plan permissions only for planner, architect, and director", async () => {
     const plugin = await load({ directory: await project() } as never);
     const config: Config = {};
     await plugin.config?.(config);
@@ -99,6 +111,7 @@ describe("codeEnsemblePlugin", () => {
     expect(permission("director")).toMatchObject({
       edit: "deny",
       bash: "deny",
+      plan: "allow",
       task: {
         "*": "deny",
         explorer: "allow",
@@ -110,53 +123,92 @@ describe("codeEnsemblePlugin", () => {
       },
     });
     expect(permission("explorer")).toMatchObject({ edit: "deny", bash: "deny", glob: "allow" });
-    expect(permission("planner")).toMatchObject({ edit: "deny", bash: "deny", webfetch: "allow" });
-    expect(permission("architect")).toMatchObject({ edit: "deny", bash: "deny", websearch: "allow" });
-    expect(permission("implementer")).toMatchObject({ edit: { "*": "allow", "*.env": "ask" } });
-    expect(permission("reviewer")).toMatchObject({ edit: "deny", bash: { "*": "ask" } });
-    for (const role of ["explorer", "visualizer", "planner", "architect", "implementer", "reviewer"]) {
+    expect(permission("planner")).toMatchObject({ edit: "deny", bash: "deny", webfetch: "allow", plan: "allow" });
+    expect(permission("architect")).toMatchObject({ edit: "deny", bash: "deny", websearch: "allow", plan: "allow" });
+    expect(permission("implementer")).toMatchObject({
+      edit: { "*": "allow", "*.env": "ask" },
+      bash: { "*": "allow", "rm *": "deny", "npm publish*": "deny" },
+      plan: "deny",
+    });
+    expect(permission("reviewer")).toMatchObject({ edit: "deny", bash: "allow", plan: "deny" });
+    for (const role of ["explorer", "visualizer", "implementer", "reviewer"]) {
       expect(permission(role)).toMatchObject({ task: "deny", plan: "deny" });
     }
   });
 
-  it("shares TASKS.md across sessions and archives a completed plan", async () => {
+  it("runs the planner→architect→director happy path without approval", async () => {
     const root = await project();
     const plugin = await load({ directory: root } as never);
     const plan = plugin.tool!.plan!;
-    const director = (sessionID: string) => toolContext("director", sessionID);
+    const planner = (session: string) => toolContext("planner", session);
+    const architect = (session: string) => toolContext("architect", session);
+    const director = (session: string) => toolContext("director", session);
 
     const created = await plan.execute(
-      { action: "create", title: "Dashboard", tasks: ["Define model", "Build UI", "Review"] },
-      director("session-a"),
+      { action: "create", title: "Initial plan", tasks: ["Define model", "Build UI", "Review"] },
+      planner("planner-create"),
     );
-    expect(outputOf(created)).toContain("Plan: Dashboard");
-    expect(revisionOf(outputOf(created))).toBe(1);
+    const createdText = outputOf(created);
+    expect(createdText).toContain("Plan: Initial plan");
+    expect(revisionOf(createdText)).toBe(1);
+    const planID = planIDOf(createdText);
+    assertPlanOutput(createdText, planID);
 
-    const approved = await plan.execute(
-      { action: "approve", expectedRevision: 1 },
-      director("session-b"),
+    const architectRead = await plan.execute({ action: "get" }, architect("architect-get"));
+    assertPlanOutput(outputOf(architectRead), planID);
+
+    const replaced = await plan.execute(
+      {
+        action: "replace",
+        expectedPlanID: planID,
+        expectedRevision: 1,
+        title: "Revised plan",
+        tasks: ["Define schema", "Build UI", "Review"],
+      },
+      architect("architect-replace"),
     );
-    expect(outputOf(approved)).toContain("Approved: yes");
-    expect(revisionOf(outputOf(approved))).toBe(2);
+    const replacedText = outputOf(replaced);
+    expect(replacedText).toContain("Plan: Revised plan");
+    expect(replacedText).toContain("Define schema");
+    expect(revisionOf(replacedText)).toBe(2);
+    assertPlanOutput(replacedText, planID);
 
-    for (const [taskID, status, evidence] of [
-      ["T001", "completed", "schema ready"],
-      ["T002", "completed", "ui shipped"],
-      ["T003", "completed", "review clean"],
-    ] as const) {
-      const updated = await plan.execute(
-        { action: "update", expectedRevision: revisionOf(outputOf(await plan.execute({ action: "get" }, director("s")))), taskID, status, evidence },
-        director("session-c"),
+    const directorRead = await plan.execute({ action: "get" }, director("director-read"));
+    expect(outputOf(directorRead)).toContain("Plan: Revised plan");
+    assertPlanOutput(outputOf(directorRead), planID);
+
+    let currentRevision = 2;
+    for (const taskID of ["T001", "T002", "T003"] as const) {
+      const inProgress = await plan.execute(
+        { action: "update", expectedPlanID: planID, expectedRevision: currentRevision, taskID, status: "in_progress" },
+        director("director-start"),
       );
-      expect(outputOf(updated)).toContain(taskID);
+      currentRevision = revisionOf(outputOf(inProgress));
+      assertPlanOutput(outputOf(inProgress), planID);
+      expect(outputOf(inProgress)).toContain(taskID);
+
+      const completed = await plan.execute(
+        {
+          action: "update",
+          expectedPlanID: planID,
+          expectedRevision: currentRevision,
+          taskID,
+          status: "completed",
+          evidence: `verified ${taskID}`,
+        },
+        director("director-complete"),
+      );
+      currentRevision = revisionOf(outputOf(completed));
+      assertPlanOutput(outputOf(completed), planID);
     }
 
-    const current = await plan.execute({ action: "get" }, director("session-d"));
     const closed = await plan.execute(
-      { action: "close", expectedRevision: revisionOf(outputOf(current)) },
-      director("session-e"),
+      { action: "close", expectedPlanID: planID, expectedRevision: currentRevision },
+      director("director-close"),
     );
-    expect(outputOf(closed)).toMatch(/Archived to/);
+    const closedText = outputOf(closed);
+    expect(closedText).toMatch(/Archived to/);
+    assertPlanOutput(closedText, planID);
     expect(await readFile(join(root, ".code-ensemble", "TASKS.md"), "utf8").catch(() => "")).toBe("");
   });
 
@@ -172,45 +224,177 @@ describe("codeEnsemblePlugin", () => {
     expect(await readFile(join(root, ".code-ensemble", "TASKS.md"), "utf8")).toContain("Worktree plan");
   });
 
-  it("rejects stale plan revisions", async () => {
+  it("enforces the runtime plan ACL per role and action", async () => {
     const plugin = await load({ directory: await project() } as never);
     const plan = plugin.tool!.plan!;
-    await plan.execute(
-      { action: "create", title: "Revision test", tasks: ["Task"] },
-      toolContext("director", "one"),
+    const planner = (session: string) => toolContext("planner", session);
+    const architect = (session: string) => toolContext("architect", session);
+    const director = (session: string) => toolContext("director", session);
+    const reviewer = (session: string) => toolContext("reviewer", session);
+
+    const created = await plan.execute(
+      { action: "create", title: "ACL plan", tasks: ["Task"] },
+      director("director-create"),
     );
-    await plan.execute(
-      { action: "approve", expectedRevision: 1 },
-      toolContext("director", "two"),
+    const planID = planIDOf(outputOf(created));
+    const revision = revisionOf(outputOf(created));
+
+    expect(outputOf(await plan.execute({ action: "get" }, planner("planner-get")))).toContain("Plan: ACL plan");
+    expect(outputOf(await plan.execute(
+      { action: "replace", expectedPlanID: planID, expectedRevision: revision, title: "X", tasks: ["T"] },
+      planner("planner-replace"),
+    ))).toMatch(/may not replace/);
+    expect(outputOf(await plan.execute(
+      { action: "update", expectedPlanID: planID, expectedRevision: revision, taskID: "T001", status: "completed" },
+      planner("planner-update"),
+    ))).toMatch(/may not update/);
+    expect(outputOf(await plan.execute(
+      { action: "add", expectedPlanID: planID, expectedRevision: revision, tasks: ["Extra"] },
+      planner("planner-add"),
+    ))).toMatch(/may not add/);
+    expect(outputOf(await plan.execute(
+      { action: "close", expectedPlanID: planID, expectedRevision: revision },
+      planner("planner-close"),
+    ))).toMatch(/may not close/);
+
+    expect(outputOf(await plan.execute({ action: "get" }, architect("architect-get")))).toContain("Plan: ACL plan");
+    const replaced = await plan.execute(
+      { action: "replace", expectedPlanID: planID, expectedRevision: revision, title: "Architect fix", tasks: ["Task"] },
+      architect("architect-replace"),
     );
-    const conflict = await plan.execute(
-      { action: "update", expectedRevision: 1, taskID: "T001", status: "completed" },
-      toolContext("director", "one"),
-    );
-    expect(outputOf(conflict)).toMatch(/revision conflict/);
-    expect(titleOf(conflict)).toBe("Error");
+    expect(outputOf(replaced)).toContain("Architect fix");
+    expect(outputOf(await plan.execute(
+      { action: "create", title: "Arch", tasks: ["T"] },
+      architect("architect-create"),
+    ))).toMatch(/may not create/);
+    expect(outputOf(await plan.execute(
+      { action: "update", expectedPlanID: planID, expectedRevision: revision, taskID: "T001", status: "completed" },
+      architect("architect-update"),
+    ))).toMatch(/may not update/);
+    expect(outputOf(await plan.execute(
+      { action: "add", expectedPlanID: planID, expectedRevision: revision, tasks: ["Extra"] },
+      architect("architect-add"),
+    ))).toMatch(/may not add/);
+    expect(outputOf(await plan.execute(
+      { action: "close", expectedPlanID: planID, expectedRevision: revision },
+      architect("architect-close"),
+    ))).toMatch(/may not close/);
+
+    expect(outputOf(await plan.execute({ action: "get" }, reviewer("reviewer-get")))).toMatch(/may not get/);
+    expect(outputOf(await plan.execute({ action: "create", title: "R", tasks: ["T"] }, reviewer("reviewer-create")))).toMatch(/may not create/);
+    expect(outputOf(await plan.execute(
+      { action: "replace", expectedPlanID: planID, expectedRevision: revision, title: "R", tasks: ["T"] },
+      reviewer("reviewer-replace"),
+    ))).toMatch(/may not replace/);
+    expect(outputOf(await plan.execute(
+      { action: "close", expectedPlanID: planID, expectedRevision: revision },
+      reviewer("reviewer-close"),
+    ))).toMatch(/may not close/);
+
+    expect(outputOf(await plan.execute({ action: "get" }, toolContext("director", "")))).toMatch(/sessionID is required/);
   });
 
-  it("allows only the director to use custom tools", async () => {
+  it("rejects stale plan id and revision on mutations", async () => {
     const plugin = await load({ directory: await project() } as never);
-    const planResult = await plugin.tool!.plan!.execute(
-      { action: "get" },
-      toolContext("reviewer", "session"),
+    const plan = plugin.tool!.plan!;
+    const director = (session: string) => toolContext("director", session);
+
+    const created = await plan.execute(
+      { action: "create", title: "Stale test", tasks: ["Task"] },
+      director("director-create"),
     );
-    expect(outputOf(planResult)).toMatch(/Only the director/);
+    const planID = planIDOf(outputOf(created));
+    const initialRevision = revisionOf(outputOf(created));
+
+    const wrongID = await plan.execute(
+      {
+        action: "update",
+        expectedPlanID: "00000000-0000-1000-8000-000000000000",
+        expectedRevision: initialRevision,
+        taskID: "T001",
+        status: "completed",
+      },
+      director("director-wrong-id"),
+    );
+    expect(outputOf(wrongID)).toMatch(/plan id conflict/);
+    expect(titleOf(wrongID)).toBe("Error");
+
+    const advanced = await plan.execute(
+      { action: "update", expectedPlanID: planID, expectedRevision: initialRevision, taskID: "T001", status: "completed", evidence: "done" },
+      director("director-advance"),
+    );
+    const advancedRevision = revisionOf(outputOf(advanced));
+
+    const staleRevision = await plan.execute(
+      { action: "update", expectedPlanID: planID, expectedRevision: initialRevision, taskID: "T001", status: "in_progress" },
+      director("director-stale"),
+    );
+    expect(outputOf(staleRevision)).toMatch(/revision conflict/);
+    expect(titleOf(staleRevision)).toBe("Error");
+    expect(advancedRevision).toBe(initialRevision + 1);
+  });
+
+  it("replaces the plan title and tasks through the architect", async () => {
+    const plugin = await load({ directory: await project() } as never);
+    const plan = plugin.tool!.plan!;
+    const planner = (session: string) => toolContext("planner", session);
+    const architect = (session: string) => toolContext("architect", session);
+
+    const created = await plan.execute(
+      { action: "create", title: "Old title", tasks: ["Old task"] },
+      planner("planner-create"),
+    );
+    const planID = planIDOf(outputOf(created));
+    const initialRevision = revisionOf(outputOf(created));
+
+    const replaced = await plan.execute(
+      {
+        action: "replace",
+        expectedPlanID: planID,
+        expectedRevision: initialRevision,
+        title: "New titled plan",
+        tasks: ["New task A", "New task B"],
+      },
+      architect("architect-replace"),
+    );
+    const replacedText = outputOf(replaced);
+    expect(replacedText).toContain("Plan: New titled plan");
+    expect(replacedText).toContain("New task A");
+    expect(replacedText).toContain("New task B");
+    expect(replacedText).not.toContain("Old title");
+    expect(replacedText).not.toContain("Old task");
+    expect(revisionOf(replacedText)).toBe(initialRevision + 1);
+    assertPlanOutput(replacedText, planID);
   });
 
   it("uses readable titles for plan actions", async () => {
     const plugin = await load({ directory: await project() } as never);
-    const created = await plugin.tool!.plan!.execute(
+    const plan = plugin.tool!.plan!;
+    const planner = (session: string) => toolContext("planner", session);
+    const architect = (session: string) => toolContext("architect", session);
+    const director = (session: string) => toolContext("director", session);
+
+    const created = await plan.execute(
       { action: "create", title: "Dashboard", tasks: ["Build UI"] },
-      toolContext("director", "session"),
+      planner("planner-create"),
     );
     expect(titleOf(created)).toBe("Create plan · Dashboard");
-    const checked = await plugin.tool!.plan!.execute(
-      { action: "get" },
-      toolContext("director", "session"),
-    );
+    const planID = planIDOf(outputOf(created));
+    const initialRevision = revisionOf(outputOf(created));
+
+    const checked = await plan.execute({ action: "get" }, director("director-get"));
     expect(titleOf(checked)).toBe("Check active plan");
+
+    const replaced = await plan.execute(
+      { action: "replace", expectedPlanID: planID, expectedRevision: initialRevision, title: "Dashboard v2", tasks: ["Build UI"] },
+      architect("architect-replace"),
+    );
+    expect(titleOf(replaced)).toBe("Replace plan · Dashboard v2");
+
+    const updated = await plan.execute(
+      { action: "update", expectedPlanID: planID, expectedRevision: initialRevision + 1, taskID: "T001", status: "in_progress" },
+      director("director-update"),
+    );
+    expect(titleOf(updated)).toBe("Mark T001 in progress");
   });
 });

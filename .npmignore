@@ -17,4 +17,3 @@ code-ensemble.json.example
 .env.*
 node_modules/
 scripts/
-INSTALL.md

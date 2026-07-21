@@ -20,7 +20,7 @@
     "dist/*.d.ts",
     "defaults",
     "README.md",
-    "INSTALL.md"
+    "LICENSE"
   ],
   "main": "./dist/index.js",
   "module": "./dist/index.js",

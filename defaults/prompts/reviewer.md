@@ -7,7 +7,7 @@ Operating rules:
 - Cite repository-relative file and line references. Explain the trigger, impact, and smallest credible fix for every finding.
 - Mark a finding `BLOCKING` only when it must be fixed before the change is safe or functionally complete. Mark actionable lower-risk issues `NON-BLOCKING`. Do not block on style, preference, or unrelated pre-existing debt.
 - Check whether tests would detect the reported failure. Treat absent regression coverage as blocking when the behavior is high-risk or the bug could realistically recur unnoticed.
-- Do not edit files or delegate work. Prefer static inspection; run read-only checks only when necessary and permitted.
+- Do not edit files or delegate work. Run any shell commands needed to inspect the repository, reproduce behavior, and verify findings.
 - Findings come first, ordered by severity. If there are no findings, say so explicitly.
 
 Return:

@@ -1,6 +1,6 @@
 import { tool } from "@opencode-ai/plugin";
 import { resolveCodeEnsembleConfig } from "./overrides.js";
-import { addPlanTasks, approvePlan, closePlan, createPlan, readActivePlan, updatePlanTask } from "./plans.js";
+import { addPlanTasks, closePlan, createPlan, readActivePlan, replacePlan, updatePlanTask } from "./plans.js";
 import { formatClosedPlanOutput, formatPlanOutput, formatToolError, planToolTitle, } from "./present.js";
 function stringField(value, key) {
     if (!value || typeof value !== "object")
@@ -19,11 +19,18 @@ function pluginOptions(options) {
     const configPath = stringField(options, "configPath");
     return configPath ? { configPath } : {};
 }
-function requireDirector(context) {
-    if (stringField(context, "agent") !== "director")
-        return "Only the director may use code-ensemble tools";
+const PLAN_ACTIONS_BY_ROLE = {
+    director: new Set(["get", "create", "update", "add", "close"]),
+    planner: new Set(["get", "create"]),
+    architect: new Set(["get", "replace"]),
+};
+function authorizePlan(context, action) {
     if (!stringField(context, "sessionID"))
         return "A sessionID is required to use code-ensemble tools";
+    const agent = stringField(context, "agent");
+    if (!agent || !PLAN_ACTIONS_BY_ROLE[agent]?.has(action)) {
+        return `Role ${agent ?? "unknown"} may not ${action} the plan`;
+    }
     return null;
 }
 const BASE_PERMISSION = {
@@ -68,13 +75,13 @@ const CODE_READ = {
 const SUBAGENT_PERMISSIONS = {
     explorer: { ...CODE_READ },
     visualizer: { ...BASE_PERMISSION, read: PROTECTED_READ, skill: "allow" },
-    planner: { ...CODE_READ, webfetch: "allow", websearch: "allow", skill: "allow" },
-    architect: { ...CODE_READ, webfetch: "allow", websearch: "allow", skill: "allow" },
+    planner: { ...CODE_READ, webfetch: "allow", websearch: "allow", skill: "allow", plan: "allow" },
+    architect: { ...CODE_READ, webfetch: "allow", websearch: "allow", skill: "allow", plan: "allow" },
     implementer: {
         ...CODE_READ,
         edit: PROTECTED_EDIT,
         bash: {
-            "*": "ask",
+            "*": "allow",
             "rm": "deny",
             "rm *": "deny",
             "rmdir": "deny",
@@ -91,7 +98,7 @@ const SUBAGENT_PERMISSIONS = {
     },
     reviewer: {
         ...CODE_READ,
-        bash: { "*": "ask" },
+        bash: "allow",
         webfetch: "allow",
         websearch: "allow",
         skill: "allow",
@@ -115,7 +122,7 @@ function agentDefinitions(config) {
             model: config.roles.director.model,
             ...(config.roles.director.variant ? { variant: config.roles.director.variant } : {}),
             prompt: config.roles.director.promptText,
-            permission: { edit: "deny", bash: "deny", task: taskPermissions },
+            permission: { edit: "deny", bash: "deny", task: taskPermissions, plan: "allow" },
         },
     };
     for (const role of SUBAGENT_ROLES) {
@@ -144,10 +151,14 @@ export const codeEnsemblePlugin = async (input, options = {}) => {
                 description: "Read or update the shared project plan in .code-ensemble/TASKS.md.",
                 args: {
                     action: tool.schema
-                        .enum(["create", "get", "approve", "add", "update", "close"])
+                        .enum(["create", "get", "replace", "add", "update", "close"])
                         .describe("Plan action to perform"),
-                    title: tool.schema.string().optional().describe("Plan title when creating"),
-                    tasks: tool.schema.array(tool.schema.string()).optional().describe("Task texts for create or add"),
+                    title: tool.schema.string().optional().describe("Plan title for create or replace"),
+                    tasks: tool.schema.array(tool.schema.string()).optional().describe("Task texts for create, replace, or add"),
+                    expectedPlanID: tool.schema
+                        .string()
+                        .optional()
+                        .describe("Plan id from get; required by replace, update, add, and close"),
                     expectedRevision: tool.schema.number().int().positive().optional().describe("Current plan revision"),
                     taskID: tool.schema.string().optional().describe("Task id for update, e.g. T001"),
                     status: tool.schema
@@ -159,38 +170,60 @@ export const codeEnsemblePlugin = async (input, options = {}) => {
                 async execute(args, context) {
                     const title = planToolTitle(args);
                     context.metadata({ title });
-                    const error = requireDirector(context);
+                    const error = authorizePlan(context, args.action);
                     if (error)
                         return formatToolError(error);
                     const ok = (output) => ({ title, output });
                     try {
-                        if (args.action === "get") {
-                            const active = await readActivePlan(directory);
-                            return ok(formatPlanOutput(active?.plan ?? null));
+                        switch (args.action) {
+                            case "get": {
+                                const active = await readActivePlan(directory);
+                                return ok(formatPlanOutput(active?.plan ?? null));
+                            }
+                            case "create": {
+                                if (!args.title || !args.tasks)
+                                    return formatToolError("title and tasks are required for create");
+                                return ok(formatPlanOutput(await createPlan(directory, args.title, args.tasks, context.abort)));
+                            }
+                            case "replace": {
+                                if (!args.expectedPlanID)
+                                    return formatToolError("expectedPlanID is required for replace");
+                                if (args.expectedRevision === undefined) {
+                                    return formatToolError("expectedRevision is required for replace");
+                                }
+                                if (!args.title || !args.tasks)
+                                    return formatToolError("title and tasks are required for replace");
+                                return ok(formatPlanOutput(await replacePlan(directory, args.expectedPlanID, args.expectedRevision, args.title, args.tasks, context.abort)));
+                            }
+                            case "add": {
+                                if (!args.expectedPlanID)
+                                    return formatToolError("expectedPlanID is required for add");
+                                if (args.expectedRevision === undefined)
+                                    return formatToolError("expectedRevision is required for add");
+                                if (!args.tasks)
+                                    return formatToolError("tasks are required for add");
+                                return ok(formatPlanOutput(await addPlanTasks(directory, args.expectedPlanID, args.expectedRevision, args.tasks, context.abort)));
+                            }
+                            case "update": {
+                                if (!args.expectedPlanID)
+                                    return formatToolError("expectedPlanID is required for update");
+                                if (args.expectedRevision === undefined)
+                                    return formatToolError("expectedRevision is required for update");
+                                if (!args.taskID || !args.status)
+                                    return formatToolError("taskID and status are required for update");
+                                return ok(formatPlanOutput(await updatePlanTask(directory, args.expectedPlanID, args.expectedRevision, args.taskID, args.status, args.evidence, context.abort)));
+                            }
+                            case "close": {
+                                if (!args.expectedPlanID)
+                                    return formatToolError("expectedPlanID is required for close");
+                                if (args.expectedRevision === undefined)
+                                    return formatToolError("expectedRevision is required for close");
+                                const closed = await closePlan(directory, args.expectedPlanID, args.expectedRevision, context.abort);
+                                return ok(formatClosedPlanOutput(closed.plan, closed.archived));
+                            }
+                            default:
+                                return formatToolError(`Unknown plan action: ${String(args.action)}`);
                         }
-                        if (args.action === "create") {
-                            if (!args.title || !args.tasks)
-                                return formatToolError("title and tasks are required for create");
-                            return ok(formatPlanOutput(await createPlan(directory, args.title, args.tasks, context.abort)));
-                        }
-                        if (args.expectedRevision === undefined) {
-                            return formatToolError("expectedRevision is required for approve, add, update, and close");
-                        }
-                        if (args.action === "approve") {
-                            return ok(formatPlanOutput(await approvePlan(directory, args.expectedRevision, context.abort)));
-                        }
-                        if (args.action === "close") {
-                            const closed = await closePlan(directory, args.expectedRevision, context.abort);
-                            return ok(formatClosedPlanOutput(closed.plan, closed.archived));
-                        }
-                        if (args.action === "add") {
-                            if (!args.tasks)
-                                return formatToolError("tasks are required for add");
-                            return ok(formatPlanOutput(await addPlanTasks(directory, args.expectedRevision, args.tasks, context.abort)));
-                        }
-                        if (!args.taskID || !args.status)
-                            return formatToolError("taskID and status are required for update");
-                        return ok(formatPlanOutput(await updatePlanTask(directory, args.expectedRevision, args.taskID, args.status, args.evidence, context.abort)));
                     }
                     catch (caught) {
                         return formatToolError(caught instanceof Error ? caught.message : String(caught));
